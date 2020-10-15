@@ -1,0 +1,1633 @@
+---
+lang: fr-FR
+title: "TER sur la nature chaotique persistente des épidémies de rougeole aux Etats-Unis et le modèle TSIR"
+author: "Koen Aristote"
+date: "7/20/2020"
+output:
+  pdf_document: default
+  html_document: default
+  number_sections: yes
+bibliography: /Users/Aris/Downloads/MEMOIRE/DATA/references.bib
+header-includes:
+ \usepackage{float}
+ \floatplacement{figure}{H}
+  \usepackage{titling}
+  \pretitle{\begin{center}
+    \includegraphics[width=2in,height=2in]{Universite_Paris_Saclay.jpg}\LARGE\\}
+  \posttitle{\end{center}}
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+library(tsiR)
+library(xts)
+library(imputeTS)
+library(lubridate)
+```
+\pagebreak
+\tableofcontents
+\pagebreak
+
+
+# Introduction
+
+Dans ce travail de recherche nous nous intéressons au travail de Benjamin D.Dalziel  sur la nature chaotique et persistente des cycles de la rougeole aux Etats-Unis. En effet, alors que les cycles de la rougeole se sont montrés stables au Royaume-Uni (des épidémies tous les 2 ans), il semble que des différences sur la période de basse transmission de la rougeole aux Etats-unis puisse entrainer une divergence du système vers une plus haute periodicité moyenne [@1]. De plus, il a été observé que les épidémies de rougeole étaient très irrégulières au Niger où de fortes perturbations démographiques cassaient les chaînes de transmission, entraînant une extinction des cas infectés durant certaines périodes [@Niamey]. Ainsi, on pensait que des divergences des cycles de la rougeole de ceux observés au Royaume-Uni entraînaient automatiquement des ruptures des cycles et des épidémies plus épisodiques. Mais l'article que nous étudions montre qu'une faible perturbation sur la période annuelle de basse transmission de la maladie entraîne une divergence des cycles observés au Royaume-Uni vers des cycles irréguliers mais sans rupture de la chaîne de transmission; c'est à dire sans extinction de la maladie [@1]. 
+
+Afin de vérifier cela nous nous intéresserons à la reproduction des résultats publiés par l'auteur et à la modélisation des épidémies par le modèle TSIR: Time-Susceptible Infected Recovered.
+
+Nous commencerons d'abord par introduire les données et effectuer une analyse descriptive des données, nous introduirons introduirons ensuite le modèle TSIR pour enfin présenter les résultats que nous avons reproduit ou approfondi de l'article de référence. 
+
+Vous trouverez une annexe contenant le code que nous avons écrit pour reproduire ces résultats. Pour executer ou accéder à l'intégralité du scripte, nous vous invitons à consulter le fichier .Rmd
+
+
+# 1-Les données
+
+Afin d'étudier ces cycles et de modéliser la population infectée, nous comparerons 40 villes aux Etats-Unis entre 1920 et 1940 et 40 villes au Royaume-Uni entre 1945 et 1965, c'est à dire sur 20 ans. Nous comparons sur des périodes différentes car les données ne sont pas disponibles pour les deux pays sur la même periode. Cependant la modélisation tient compte des variations de la population et de la natalité, et il a été montré dans d'autres travaux que les épidémies de la rougeole au Royaume-Uni sont restées stables (periode de 1 ou 2 ans) entre 1920 et 1940 , ce qui n'affecte donc pas notre analyse [@1]. Les séries auxquelles nous aurons accès pour chacune des villes sont celles des naissances, de la taille de la population et des cas infectés toutes les deux semaines. 
+
+Les données sont celles utilisées dans l'article de référence et sont disponibles sur [\underline{ce lien}](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4741526/). Celles des Etats-unis, ont été obtenues à partir du Project Tycho qui recense les cas infectés de plusieurs maladies et à partir des données de recensement extrapolées de sorte à avoir des mesures bimensuelles. Pour le Royaume-Uni, les données utilisées ont été obtenues sur d'anciens travaux effectués sur la rougeole. [@1]
+
+
+```{r,echo=FALSE}
+measles = read.csv(file ="measlesUKUS 2.csv",sep=",",stringsAsFactors = FALSE)
+modeldata = measles[measles$loc=='LONDON' & (1945<= measles$decimalYear& measles$decimalYear <=1966),c(1,4,5,6)]
+modeldata_NY = measles[measles$loc=='NEW YORK'& (1920<= measles$decimalYear& measles$decimalYear <=1940),c(1,4,5,6)]
+modeldata_LA = measles[measles$loc=='LOS ANGELES'& (1920<= measles$decimalYear& measles$decimalYear <=1940),c(1,4,5,6)]
+
+modeldata_SP = measles[measles$loc=='SPOKANE'& (1920<= measles$decimalYear& measles$decimalYear <=1940),c(1,4,5,6)]
+
+
+
+colnames(modeldata)[4]= 'births'
+colnames(modeldata)[1]= 'time'
+modeldata$time=measles[measles$loc=="LONDON"& (1945<= measles$decimalYear& measles$decimalYear <=1966),"decimalYear"]
+
+colnames(modeldata_NY)[4]= 'births'
+colnames(modeldata_NY)[1]= 'time'
+modeldata_NY$time=measles[measles$loc=="NEW YORK"& (1920<= measles$decimalYear& measles$decimalYear <=1940),"decimalYear"]
+
+colnames(modeldata_LA)[4]= 'births'
+colnames(modeldata_LA)[1]= 'time'
+modeldata_LA$time=measles[measles$loc=="LOS ANGELES" & (1920<= measles$decimalYear& measles$decimalYear<=1940),"decimalYear"]
+
+colnames(modeldata_SP)[4]= 'births'
+colnames(modeldata_SP)[1]= 'time'
+modeldata_SP$time=measles[measles$loc=="SPOKANE" & (1920<= measles$decimalYear& measles$decimalYear<=1940),"decimalYear"]
+
+
+
+```
+
+Voici le tracé des séries des cas infectés ainsi que des taux de natalité pour les villes de Londres, New York et Los Angeles et Spokane. On observe que contrairement au cas de Londres, les cycles d'épidémies de la rougeole dans les villes américaines sont moins réguliers. 
+ 
+```{r foo,echo=FALSE,fig.cap="Population infectée et taux de natalité (en rouge) dans 4 villes",out.width="55%",fig.align="center"}
+par(mfrow=c(2,2),mar=c(3,5,4,4)+0.3)
+plot(modeldata$time,modeldata$cases,type='l',axes=FALSE,xlab="",ylab="",main = "LONDRES")
+axis(side=2,at=pretty(range(modeldata$cases)))
+axis(side=1,at=pretty(range(modeldata$time)))
+mtext("cas infectés",side=2,line=2,cex=0.6)
+par(new=TRUE)
+plot(modeldata$time,modeldata$births*1e3/modeldata$pop,axes=FALSE,col='red',type='l',lty="dotted",xlab = "",ylab = "")
+axis(side=4,at=pretty(range(modeldata$births*1e3/modeldata$pop)))
+mtext("Taux de natalité", side = 4, line = 3,cex=0.6)
+
+
+
+plot(modeldata_NY$time,modeldata_NY$cases,type='l',axes=FALSE,xlab="",ylab="",main = "NEW YORK")
+axis(side=2,at=pretty(range(modeldata_NY$cases)))
+mtext("cas infectés",side=2,line=2,cex=0.6)
+axis(side=1,at=pretty(range(modeldata_NY$time)))
+par(new=TRUE)
+plot(modeldata_NY$time,modeldata_NY$births*1e3/modeldata_NY$pop,axes=FALSE,col='red',type='l',lty="dotted",xlab = "",ylab = "")
+axis(side=4,at=pretty(range(modeldata_NY$births*1e3/modeldata_NY$pop)))
+mtext("Taux de natalité", side = 4, line = 3,cex=0.6)
+
+
+plot(modeldata_LA$time,na_interpolation(modeldata_LA$cases),type='l',axes=FALSE,xlab="",ylab="",main = "LOS ANGELES")
+axis(side=2,at=pretty(range(na_interpolation(modeldata_LA$cases))))
+mtext("cas infectés",side=2,line=2,cex=0.6)
+axis(side=1,at=pretty(range(modeldata_LA$time)))
+par(new=TRUE)
+plot(modeldata_LA$time,modeldata_LA$births*1e3/modeldata_LA$pop,axes=FALSE,col='red',type='l',lty="dotted",xlab = "",ylab = "")
+axis(side=4,at=pretty(range(modeldata_LA$births*1e3/modeldata_LA$pop)))
+mtext("Taux de natalité", side = 4, line = 3,cex=0.6)
+
+plot(modeldata_SP$time,na_interpolation(modeldata_SP$cases),type='l',axes=FALSE,xlab="",ylab="",main = "SPOKANE")
+axis(side=2,at=pretty(range(na_interpolation(modeldata_SP$cases))))
+mtext("cas infectés",side=2,line=2,cex=0.6)
+axis(side=1,at=pretty(range(modeldata_SP$time)))
+par(new=TRUE)
+plot(modeldata_SP$time,modeldata_SP$births*1e3/modeldata_SP$pop,axes=FALSE,col='red',type='l',lty="dotted",xlab = "",ylab = "")
+axis(side=4,at=pretty(range(modeldata_SP$births*1e3/modeldata_SP$pop)))
+mtext("Taux de natalité", side = 4, line = 3,cex=0.6)
+```
+
+En effet, en tracant le spectogramme de ces séries (Figure 2), nous pouvons observer que les 3 villes aux Etats-Unis présentent une périodicité plus élevée qu'à Londres où l'on observe des cycles réguliers de periode 1 an et 2 ans. De plus, ces cycles restent aussi réguliers et de même période pour la plupart des autres villes étudiées au Royaume-Uni [@6]. Cependant aux Etats unis on observe des poids importants sur les fréquences de 5 ans à Spokane et 3 ans à Los Angeles, et ce phénomène est observé sur de nombreuses villes aux Etats-Unis.
+
+Notre but sera donc de montrer que cette irrégularité est due à la nature chaotique des épidémies de la rougeole causée par une petite perturbation sur la periode de basse transmission de la maladie aux Etats-Unis à partir du modèle TSIR.
+ 
+```{r,echo=FALSE,fig.cap="Spectrogramme des 4 séries de la figure 1",out.width="60%",fig.align="center"}
+
+spec = spectrum(modeldata$cases,plot=FALSE,span=2)
+spec_ny = spectrum(modeldata_NY$cases,plot=FALSE,span=2)
+spec_la = spectrum(na_interpolation(modeldata_LA$cases),plot=FALSE,span=2)
+spec_sp = spectrum(na_interpolation(modeldata_SP$cases),plot=FALSE,span=2)
+
+par(mfrow=c(2,2))
+plot((1/spec$freq/26),spec$spec,type='l',xlim=c(0,5),main="LONDRES",xlab="Periode (années)",ylab="intensité")
+
+plot((1/spec_ny$freq/26),spec_ny$spec,type='l',xlim=c(0,5),main="NEW YORK",xlab="Periode (années)",ylab="intensité")
+
+plot((1/spec_la$freq/26),spec_la$spec,type='l',xlim=c(0,5), main= "LOS ANGELES",xlab="Periode (années)",ylab="intensité")
+
+plot(rev(1/spec_sp$freq/26),rev(spec_sp$spec),xlim=c(0,20),type='l',main="SPOKANE",xlab="Periode (années)",ylab="intensité")
+```
+ 
+ 
+# 2-Le modèle TSIR
+
+Le modèle utilisé dans ce travail pour simuler les données est le modèle TSIR (Time-Series Susceptible Infected Removed) qui consiste à déterminer la population infectée à l'instant $t+1$ à travers l'espérance de la population infectée à l'instant $t+1$ puis de considérer les variations par rapport à cette espérance à travers la loi négative binomiale.
+ 
+## Définition du modèle:
+
+Le modèle est établi comme suit. Soit:
+
+
+ * $I_t$ la population infectée à l'instant t, où t  représente une mesure toutes les 2 semaines
+ * $B_t$ le nombre de naissances
+ * $S_t$ la population susceptible à l'instant t
+ * $N_t$ la taille de la population à l'instant t
+ * $\alpha$ un paramètre strictement positif et proche de 1
+ * $\beta_{t \mod 26}$ le taux de transmission à l'instant $t$ , supposé saisonnier de période 1 an. Donc 26 valeurs
+
+On modélise l'espérance de la population infectée et la population susceptible à l'instant suivant par:
+$$
+\mathbb{E}[I_{t+1}] = \beta_tI_t^\alpha S_tN_t^{-1}\varepsilon_t \tag{1} $$ $$
+S_{t+1} = S_t + B_t - I_{t+1} + u_t 
+$$
+Où $\varepsilon_t$ est un bruit tel que $\mathbb{E}\left[\log\left(\varepsilon_t\right)\right] = 0 \text{ et } \mathbb{V}[\log(\varepsilon_t)]=\sigma^2$ que nous supposerons gaussien ($\log(\varepsilon_t)$) et u_t est tel que $\mathbb{E}\left[u_t\right] = 0 \text{ et } \mathbb{V}[u_t]=\sigma_u^2$ [@1][@5][@6][@11]
+
+En passant au log dans la première équation on a alors: 
+
+$$
+\log(I_{t+1}) = \log(\beta_t)+ \alpha\log(I_t) + \log(S_t) -\log(N_t) + \log(\varepsilon_t)
+$$
+Ainsi on a:
+
+$$
+\mathbb{E}[\log(I_{t+1})] = \log(\beta_t)+ \alpha\log(I_t) + \log(S_t) -\log(N_t) 
+$$
+Le squelette déterministe correspond à la situation où $I_{t+1}=E[I_{t+1}]$ et le modèle stochastique suppose que la population infectée à l'instant suivant suit une loi Négative Binomiale:
+
+$$I_{t+1}\sim\mathcal{NB}(\mathbb{E}[I_{t+1}],I_t)$$
+On observe que si l'on connait la population susceptible $S_t$ alors en passant au log nous avons un modèle linéaire gaussien. Cependant cette série n'est généralement pas connue et il faut donc la reconstruire avant de pouvoir estimer les paramètres $\beta_t$ et $\alpha$ du modèle. 
+De plus le nombre de cas reportés est souvent sous estimé et n'est généralement pas représentatif de la réalité. Il faut prendre cela en compte dans le modèle afin de stationnariser des séries que nous manipulerons durant l'estimation des paramètres et dans le but de s'approcher le plus possible de la réalité[@5].  
+
+## Réecriture du modèle et estimation
+
+Si $I_t$ est le nombre de cas réel alors on modélise $I_t = \rho_t C_t$ où $C_t$ est le nombre de cas reportés (les données) et $\rho_t >0$ le taux de rapport. Si la population est sous estimée alors $\rho_t$ sera supérieur à 1 si il est sur-estimé alors on aura  $0<\rho_t<1$.
+Ainsi en remplacant dans l'équation régissant la population susceptible on obtient
+$$S_{t+1}= S_t + B_t - \rho_{t+1}C_{t+1} + u_t$$
+Puis en écrivant $S_t$ comme $S_t = \bar S N_t + D_t$ c'est à dire comme les déviations $D_t$ de la population susceptible par rapport à sa population susceptible moyenne $\bar S N_t$ (où $\bar S$ est la proportion moyenne de la population susceptible) à chaque instant , si on remplaçe dans l'équation ci-dessus on a alors:  
+$$
+D_{t+1}= D_t + B_t - \rho_{t+1}C_{t+1} + \bar S(N_t-N_{t+1}) + u_t \\
+$$
+
+$$ \iff D_{t+1} = D_0 + \sum\limits_{i=0}^t B_i -\sum\limits_{i=0}^{t}\rho_{i+1}C_{i+1}  +\sum\limits_{i=0}^t u_i + \bar S(N_0 - N_{t+1})$$
+$$\iff D_{t+1}= D_0 - \rho\sum\limits_{i=0}^t C_{i+1}  + \sum\limits_{i=0}^t B_i -\sum\limits_{i=0}^{t}(\rho_{i+1} - \rho)C_{i+1} + \sum\limits_{i=0}^t u_i+ \bar S(N_0 - N_{t+1})$$
+avec $\rho=\mathbb{E}[\rho_{t+1}]$
+$$\iff \sum\limits_{i=0}^t B_i = -D_0 + \rho\sum\limits_{i=0}^t C_{i+1} + D_{t+1} +\sum\limits_{i=0}^{t}(\rho_{i+1} - \rho)C_{i+1} -  \sum\limits_{i=0}^t u_i + \bar S( N_{t+1}-N_0 )$$
+
+Il est raisonnable d'ignorer le dernier terme de l'équation ci dessus car il est d'espérance nulle [@1], de plus en supposant un taux de rapport déviant peu de sa moyenne $\rho$ et pour un bruit $u_t$ quasiment nul on a une relation linéaire entre le cumul des naissances et des cas reportés et on peut extraire $D_t$ par les résidus de la régression et la moyenne $\rho$ comme la pente de régression. 
+
+Sinon nous pouvons extraire $\rho_t$ comme les pentes de régressions locales[@5]. En effet, en notant: 
+
+ * $R_{t+1}= \sum\limits_{i=0}^{t}(\rho_{i+1} - \rho)C_{i+1}$
+ * $U_{t+1} = \sum\limits_{i=0}^t u_i$
+ 
+ 
+ L'équation ci-dessus devient
+$$\sum\limits_{i=0}^t B_i = -D_0 + \rho\sum\limits_{i=0}^t C_{i+1} + D_{t+1} +R_{t+1} - U_{t+1} + \bar S( N_{t+1}-N_0 )$$
+ On observe que
+ 
+  * $R_{t+1} = R_{t} + (\rho_{t+1} - \rho)C_{t+1}$
+  * $U_{t+1} = U_{t} + u_t$
+ 
+ Ainsi en remplacant dans l'équation:
+
+$$\sum\limits_{i=0}^t B_i = -D_0 + D_{t+1} +R_{t}+ \rho\sum\limits_{i=0}^t C_{i+1}  + (\rho_{t+1} - \rho)C_{t+1}- U_{t} - u_t + \bar S( N_{t+1}-N_0 )$$
+Que l'on peut réecrire comme: 
+$$ \sum\limits_{i=0}^t B_i = -D_0  + D_{t+1} +R_{t} +\rho_{t+1}\sum\limits_{i=0}^t C_{i+1} - (\rho_{t+1} - \rho)\sum\limits_{i=0}^{t-1}C_{i+1}- U_{t} - u_t + \bar S( N_{t+1}-N_0 )$$
+En passant à l'espérance conditionnellement à $U_t, R_t$ on a alors: 
+
+$$\mathbb{E}\left[ \sum\limits_{i=0}^t B_i\vert R_t,U_t\right] = -D_0 +R_{t}- U_t +\rho_{t+1}\sum\limits_{i=0}^t C_{i+1} $$
+
+Car:
+
+$$\mathbb{E}\left[R_{t+1}\vert R_t \right]= R_{t}$$ et
+  
+  $$\mathbb{E}\left[U_{t+1}\vert U_t \right]= U_{t}$$
+
+
+ En regroupant des termes comme un intercept variant dans le temps $\eta_t =  -D_0 + R_t-U_t$ [@5]:
+$$\sum\limits_{i=0}^t B_i = \eta_t + \rho_{t+1}\sum\limits_{i=0}^t C_{i+1} +D_{t+1} -u_t + \bar S( N_{t+1}-N_0 )$$
+
+En ignorant les deux derniers termes de l'équation ci-dessus on observe que l'on peut obtenir les valeurs de $\rho_t$ comme les valeurs des pentes de régression locales entre le cumul des naissances et le cumul des cas infectés. Et les valeurs de $D_t$ proviennent des résidus. De plus, il a été montré que le lissage de splines, fonctionne aussi et qu'il est plus robuste que la régression linéaire et nous utiliserons cette méthode pour estimer les valeurs de $\rho_t$ en ajustant une fonction polynomiale par morceaux sur le nuage de points correspondant au cumul des cas infectés en fonction des naissances, où chaque polynôme est de degré q de sorte à obtenir une fonction de classe C^{q-1}. Dans notre cas, q=3, c'est à dire que nous ajusterons une spline cubique. 
+
+Ainsi en connaissant $D_t$ il ne reste plus qu'à estimer $\bar S$ afin de reconstruire la population susceptible. La  valeur moyenne de la population susceptible à l'instant t $\sigma$ est égale à $\sigma = \bar S N_t$ où $\bar S$ est la proportion moyenne de susceptibles [@1]. Donc on a
+$$\mathbb{E}[\log(I_{t+1})] = \log(\beta_t)+ \alpha\log(I_t) + \log(\bar S N_t + D_t) -\log(N_t)$$
+Ainsi en estimant $\bar S$ par maximum de vraisemblance indépendamment des paramètres $\beta_t$ et $\alpha$, c'est à dire en calculant la vraisemblance pour plusieurs valeurs candidates de $\bar S$ et en conservant la valeur de $\bar S$ maximisant la vraisemblance, nous aboutissons à un modèle linéaire en les paramètres. Nous pourrons donc estimer les 27 paramètres restants $\alpha$ et $\beta_t$ conditionnellement à $\bar S$. 
+
+## Reconstruction de la population susceptible et estimation des paramètres 
+
+Afin d'illustrer le processus voila comment nous avons procédé sur les données de la ville de Londres.
+
+Afin d'obtenir un taux de rapport variable nous avons estimé la pente d'un lissage par spline du cumul des naissances en fonction du cumul des cas infectés. [@Epidemics]
+
+Tout d'abord nous effectuons l'estimation des paramètres à l'aide du package tsiR crée par un des co-auteurs de cet article qui permet d'estimer les paramètres automatiquement[@tsiR]. Ceci nous permettra de comparer nos résultats.
+
+Voici la liste des paramètres obtenus par le package tsiR. Nous comparerons l'ajustement de notre modèle avec celui du package pour s'assurer de la cohérence des résultats obtenus. 
+```{r,echo=FALSE}
+##Estimation pour LONDRES avec le package TSIR##
+
+#Calcul de rho et extraction des résidus de la regression cumul/cumul
+res = runtsir(data = modeldata,xreg="cumbirths",method = "negbin",regtype='spline')
+```
+
+
+### 1ère méthode: Lissage par splines
+
+Voici les réultats obtenus par  par l'ajustement d'une spline cubique au cumul des cas infectés en fonction du cumul des naissances. En effet il est plus précis d'effectuer la régression sur le cumul des cas infectés en fonction des naissances car le nombre de cas fluctue beaucoup plus que les naissances, surtout aux Etats-Unis, et effectuer la régression dans le cas inverse provoque un lissage exagéré [@1]. Ainsi nous pouvons extraire les résidus et les pentes locales de la spline ajustée en chaque point, c'est à dire $\rho_t$. (c.f annexe pour voir le code)
+
+```{r,include=FALSE}
+Births = modeldata$births
+```
+```{r,message=FALSE,echo=FALSE}
+#Regression cumul/cumul
+regression = smooth.spline(x=cumsum(Births),y=cumsum(modeldata$cases),df=2.5) 
+## Calcul de rho comme la pente en chaque point 
+rho = predict(regression,cumsum(Births),deriv=1)$y
+# Extraction des résidus, ajustement par rho. 
+D = -resid(regression)/rho 
+```
+
+On obtient bien des résultats proches de celui du package réglé de sorte à utiliser la méthode de lissage par splines pour l'obtention de rho. 
+ 
+```{r,echo=FALSE,fig.cap="Comparaison de rho et des résidus",out.width="50%",fig.show="hold"}
+
+#on réajuste les cas par rho_t
+plot(1/rho,type='l',col='red',xlab="temps",ylab="1/rho")
+lines(res$rho)
+legend("topleft",legend = c("tsiR","manuel"),col=c("black","red"),lty=1,cex=0.7)
+plot(res$Z,type='l',xlab="temps",ylab="Dt")
+lines(D,col='red')
+legend("topleft",legend = c("tsiR","manuel"),col=c("black","red"),lty=1,cex=0.7)
+```
+
+
+### 2ème méthode: régression linéaire: 
+Nous pouvons aussi obtenir D et $\rho$ par régression linéaire comme nous l'avons décrit ci-dessus et nous obtiendrons donc un $\rho$ constant.  (c.f annexe pour voir le code)
+```{r,echo=FALSE}
+regression.lin = lm(cumsum(modeldata$cases)~cumsum(Births)) 
+rho_2 = regression.lin$coefficients[2]
+D2 = -regression.lin$residuals/rho_2
+```
+
+
+On règle la fonction du package tsiR afin de calculer rho à partir d'une régression linéaire.  (c.f annexe pour voir le code)
+```{r,message=FALSE,echo=FALSE}
+res2 = runtsir(data = modeldata,xreg="cumbirths",method = "negbin",regtype='lm')
+```
+
+Et on observe que les résidus dans les deux méthodes sont très proches et que les résultats sont les mêmes avec le package. De plus les valeurs de rho s'alignent aussi toutes bien. 
+ 
+```{r,echo=FALSE,out.width="60%",fig.align="center",fig.cap="Comparaison des deux méthodes sur les résidus"}
+#on réajuste les cas par le reporting rate
+plot(res2$Z,type='l',cex=0.5)
+lines(D2,col='red',lty="dotted")
+lines(D,col='green',lty="dotted")
+legend("bottomright",legend=c("tsiR-lm","lm","spline"),col=c("black","red","green"),lty=c("solid","dotted","dotted"),cex=0.5)
+
+paste("rho-tsiR-lm=",round(1/res2$rho[1],digits=3))
+paste("rho_lm=",round(rho_2,digits=3))
+paste("mean-rho-spline",round(mean(rho),digits=3))
+```
+
+On ajuste ensuite les cas reportés par le taux de rapport puis on crée une série avec un retard d'une mesure de temps et une en avance pour pouvoire représenter $I_t$ et $I_{t+1}$ respectivement. 
+```{r,echo=FALSE}
+I= modeldata$cases/rho
+I_t=I[1:546]
+I_tp1=I[2:547]
+```
+
+
+Il reste alors à estimer les paramètres $\alpha$, $\beta$, $\bar S$. On suppose dans le modèle que $\beta_t$,le taux de transmission, varie de manière saisonnière [@5]. Ainsi il suffit d'estimer 26 coefficients qui se répèteront chaque année. 
+
+On crée un vecteur de la taille de notre série avec 26 niveaux pour la saisonnalité annuelle,  un vecteur de candidats pour $\bar S$ parmi lequel nous choisirons sa valeur par maximum de vraisemblance puis un vecteur où nous stockerons les valeurs de la vraisemblance pour chaque valeur de sigma. De plus nous passons au log pour les séries $I_t, I_{t+1}, N_t$.   (c.f annexe pour accéder au code)
+
+```{r,echo=FALSE}
+## Estimation de Sbarre, beta et alpha
+saison= rep(1:26,21) #dummy variable pour beta
+log_Itp1= log(I_tp1) # It+1 en log
+log_It= log(I_t) # It en log
+D_t= D[1:546] # résidus même longueur
+sbar = seq(0.02,0.4,length=300) #vecteurs des candidats de sbarre
+offsetN = -log(modeldata$pop[1:546]) #log de la population
+vraisemblance = rep(NA, length(sbar)) # vecteur contenant les valeurs de la vraisemblance
+```
+
+Nous ajustons alors un modèle linéaire gaussien pour chaque valeur de $\bar S$ et calculons la vraisemblance. Notre estimation de $\sigma$ sera donc la valeur de $\bar S$ maximisant la vraisemblance. Nous utilisons la fonction glm avec lien 'identity' et family='gaussian', c'est à dire un modèle linéaire gaussien car elle nous retourne la valeur de la déviance = $-2log(l(\bar S)))$ contrairement à la fonction lm, ce qui nous permet de facilement accéder à la vraisemblance.  (c.f annexe pour accéder au code)
+
+
+```{r,echo=FALSE}
+for(i in 1:length(sbar)){
+St = log(sbar[i]*modeldata$pop[1:546] + D_t) #reconstruction pour chaque valeur de sbarre
+glmfit = glm(log_Itp1~ -1 +as.factor(saison) +log_It +offset(St)+offset(offsetN)
+,family=gaussian(link="identity")) #on estime les paramètres du modèle pour Sbarre
+vraisemblance[i] = glmfit$deviance/2 #stockage de la vraisemblance pour sbarre
+}
+```
+ 
+ Voici un graphe de l'opposé de la log vraisemblance obtenu en fonction de sigma et celui obtenu par le package en fonction de $\bar S * \bar N$ ($\bar N$ la population moyenne) à droite. 
+  
+```{r,figures-side,echo=FALSE,fig.align="center",fig.show="hold",out.width="40%",,fig.cap="Vraisemblance calculée vs package tsiR"}
+
+plot(sbar,vraisemblance,type='l',main="calcul manuel",xlab="sbarre",ylab = "- log vraisemblance")
+abline(v=sbar[which.min(vraisemblance)])
+plotsbar(res)
+
+```
+
+Ainsi on obtient une proportion moyenne de la population susceptible de 0.088 vs 0.1 dans le package tsiR. Cette différence avec le package TSIR provient probablement du fait qu'il ne semble pas tenir compte de la taille de la population durant l'estimation des paramètres.
+```{r,echo=FALSE}
+sbar_hat= sbar[which.min(vraisemblance)] # lestimateur de sbarre minimise -logvraisemblance
+paste("sbarre-tsiR=",round(res$sbar/mean(res$pop),digits=3))
+paste("sbarre=",round(sbar_hat,digits=3))
+```
+
+
+Nous pouvons maintenant reconstruire S et estimer $\alpha$ et $\beta$ (c.f annexe pour accéder au code):
+```{r,echo=FALSE}
+Susc_ldn_rec =  log(sbar_hat*modeldata$pop[1:546]+ D_t) #reconstruction de S
+Londonfit = glm(log_Itp1~ -1+ as.factor(saison) + log_It + offset(offsetN)
+                + offset(Susc_ldn_rec)) #estimation des paramètres 
+```
+On obtient les valeurs estimées de $\beta_t$ et $\alpha$ et nous pouvons donc obtenir les valeurs ajustées de la série des populations infectées. On observe que notre modèle s'ajuste bien aux données sur le plot des valeurs ajustées comparées aux données ci dessous et de même pour le résultat obtenu par package tsiR. De plus, on observe que les résidus de la régression semblent bien normalement distribués au regard du qqplot et sur l'histogramme.
+```{r,echo=FALSE,out.width="80%",fig.align="center",fig.cap="Ajustement du modèle aux données et estimation",message=FALSE,warning=FALSE}
+par(mfrow=c(2,2))
+#on assigne les paramètres alpha et beta
+alpha=unlist(Londonfit$coefficients[27])
+beta= exp(unlist(Londonfit$coefficients[1:26]))
+conf=confint(Londonfit)
+plot(beta,type='l',col='red',ylab="Beta",main="Valeurs estimées de beta + IC 95%",ylim=c(8,30))
+lines(exp(conf[1:26,1]))
+lines(exp(conf[1:26,2]))
+legend("topright",c("beta","95% IC"),col=c("red","black"),lty=1,cex=0.5)
+
+hist(Londonfit$residuals,proba="T",main="Histogramme des résidus")
+qqnorm(Londonfit$residuals)
+
+
+plot(exp(Londonfit$fitted.values),col='red',type='l',xlab="time",ylab="Yhat",lty="dotted",main="Ajustement du modèle aux données")
+lines(modeldata$cases/rho,col='black',lty="solid")
+lines(exp(res$glmfit$fitted.values),col='green',lty="dotted")
+legend("topleft",legend=c("Modèle","tsiR","Observations/rho"),col=c("red","black","green"),lty=c("dotted","solid","dotted"),cex=0.5)
+
+paste("alpha=",round(alpha,digits=3))
+
+```
+
+
+## Comment simuler à partir des paramètres estimés:
+ 
+Ayant estimé les paramètres nous pouvons donc maintenant simuler les cycles de la rougeole à partir de conditions initiales sur la population susceptible et le nombre d'infectés. Nous créons une fonction qui calculera étant donnés  $\beta_t$, $\alpha$, $B_t$ et $N_t$, la population infectée en partant de conditions initiales $S_0$ et $I_0$ (c.f annexe pour accéder au code). Nous pourrons simuler selon le modèle déteministe qui considère que $I_{t+1} = \mathbb{E}[I_{t+1}]$ ou selon le modèle stochastique négatif binomial décrit ci-dessus. 
+
+```{r,echo=FALSE}
+
+#Fonction simulant une série à partir des paramètres 
+#du modèle et de conditions initiales, mode stochastique ou deterministe
+SimTsir2=function(beta, alpha, B, N, inits = list(Snull = 0, Inull = 0), type = 1)
+  {
+IT = length(B)
+s = length(beta) 
+lambda = rep(NA, IT) 
+I = rep(NA, IT)
+S = rep(NA, IT)
+I[1] = inits$Inull
+lambda[1] = inits$Inull
+S[1] = inits$Snull
+
+
+for(i in 2:IT) 
+  {
+lambda[i] = beta[((i-2) %% s)+1]*S[i - 1]*(I[i - 1]^alpha)/N[i-1]
+
+if(type == 2) 
+    {I[i] = rnbinom(1,mu=lambda[i],size=I[i-1]+1e-10)}
+if(type == 1) 
+{I[i] = lambda[i]}
+
+
+
+S[i] =max(S[i - 1] + B[i-1] - I[i],1)
+
+  }
+return(list(I = I, S = S)) 
+}
+
+```
+
+
+# 3-Résultats
+
+Pour résoudre notre problématique sur la nature chaotique des cycles de la rougeole nous souhaitons montrer empiriquement que des perturbation de la periode de basse transmission entraînent de grandes différences sur les cycles de la rougeole en reproduisant les résultats de l'article de Dalziel. 
+
+
+## Précision et comportement du modèle
+
+Dans cette partie nous reproduisons les résultats traitant de la précision du modèle TSIR et effectuons des prédictions. 
+
+Pour cela, nous comparons les séries de New York, Boston et Londres avec les simulations puis avec les prédictions.
+
+Ensuite nous comparons le spectrogramme des  données observées pour ces trois villes avec les spectogrammes de 100 simulations du modèle stochastique par ville à partir des  paramètres éstimés par la procédure décrite précédemment et des conditions initiales. 
+
+Afin de pouvoir traiter différentes villes de manière plus systématique nous avons créé une fonction param_estim qui estime les paramètres du modèle pour n'importe quel jeu de données de la même manière que décrite dans la partie précédente.  
+
+```{r,echo=FALSE}
+#fonction calculant les paramètres pour n'importe quel jeu de données
+param_estim = function(df)
+{
+  reg = smooth.spline(cumsum(df$births),cumsum(df$cases),df=5)
+
+  
+  rho_ = predict(reg,deriv=1)$y
+  Z = -resid(reg)/rho_
+  I_adj= df$cases/rho_
+  It=I_adj[1:(length(df$births)-1)]
+  Itp1=I_adj[2:(length(df$births))]
+  D_ = Z
+  beta_ = rep(1:26,21)
+  log_Itp1_= log(Itp1)
+  log_It_= log(It)
+  Dt= D_[1:(length(df$births)-1)]
+  sbarre = seq(0.02,0.25,length.out =250)
+  N_off = -log(df$pop[1:(length(df$births)-1)])
+  vrais = rep(NA, length(sbarre))
+
+  for(i in 1:length(sbarre)){
+     S_t_ = log(sbarre[i]*(df$pop[1:(length(df$births)-1)]) + Dt)
+     glmfit_ = glm(log_Itp1_~ -1 +as.factor(beta_[1:(length(df$births)-1)])+log_It_+ offset(S_t_+N_off))
+     vrais[i] = glmfit_$deviance /2
+       }
+   sbar_hat_= sbarre[which.min(vrais)]
+#   plot(sbarre,vrais)
+
+   Susceptibles_log =  log(sbar_hat_*(df$pop[1:(length(df$births)-1)])+ Dt)
+
+   fit = lm(log_Itp1_ ~ -1+ as.factor(beta_[1:(length(df$births)-1)])  + log_It_[1:(length(df$births)-1)] + offset(N_off[1:(length(df$births)-1)]+ Susceptibles_log[1:(length(df$births)-1)]))
+   
+   
+   alpha_hat=fit$coefficients[27]
+   beta_hat= exp(unlist(fit$coefficients[1:26]))
+   Susceptibles = exp(Susceptibles_log)
+   fittedval = exp(fit$fitted.values)
+   res_= list(alpha_ = alpha_hat, beta_=beta_hat, Suc= Susceptibles,fitt=fittedval, smean=sbar_hat_,rho_hat=rho_,Pop=df$pop,Bi=df$births,It=Itp1)
+  return(res_)
+}
+
+param_estim2 = function(df)
+{
+  reg = smooth.spline(cumsum(df$births),cumsum(df$cases),df=5)
+
+  Z = -resid(reg)
+  rho_ = predict(reg,deriv=1)$y
+  I_adj= df$cases/rho_
+  It=I_adj[1:(length(df$births)-1)]
+  Itp1=I_adj[2:(length(df$births))]
+  D_ = Z/rho_
+  beta_ = rep(1:26,21)
+  log_Itp1_= log(Itp1)
+  log_It_= log(It)
+  Dt= D_[1:(length(df$births)-1)]
+  sbarre = 0.035
+  N_off = -log(df$pop[1:(length(df$births)-1)])
+
+   Susceptibles_log =  log(sbarre*(df$pop[1:(length(df$births)-1)])+ Dt)
+
+   fit = glm(log_Itp1_ ~ -1+ as.factor(beta_[1:(length(df$births)-1)])  + offset(N_off[1:(length(df$births)-1)]+ Susceptibles_log[1:(length(df$births)-1)]+ 0.975*log_It_[1:(length(df$births)-1)]))
+  
+   alpha_hat=0.975
+   beta_hat= exp(unlist(fit$coefficients[1:26]))
+   Susceptibles = (exp(Susceptibles_log))
+   fittedval = exp(fit$fitted.values)
+   res_= list(alpha_ = alpha_hat, beta_=beta_hat, Suc= Susceptibles,fitt=fittedval, smean=sbarre,rho_hat=rho_,Pop=df$pop,Bi=df$births,It=Itp1)
+  return(res_)
+}
+```
+
+### Données manquantes
+
+Avant de pouvoir estimer et simuler massivement, nous avons remarqué que la majorité des séries sur la population infectée aux Etats-Unis contenait des données manquantes. Cependant le nombre de données manquantes est relativement faible (maximum de 42 données manquantes pour la série de Milwaukee) comparé à la longeur des séries étudiées de 547 mesures.
+Ainsi, nous les avons complété par interpolation linéaire en vérifiant que la reconstruction est cohérente avec la réalité. Ci dessous un exemple de complétion des données manquantes pour Buffalo. 
+```{r,include=FALSE}
+measlesUK = measles[measles$country=="UK" & measles$year %in% c(1945:1965),c(10,3,4,5,6)]
+colnames(measlesUK)[1]="time"
+colnames(measlesUK)[5]="births"
+
+measlesUS = measles[measles$country== 'US' & measles$year %in% c(1920:1940),c(10,3,4,5,6)]
+colnames(measlesUS)[1]="time"
+colnames(measlesUS)[5]="births"
+
+
+library(epimdr)
+library(imputeTS)
+
+  #   BRIDGEPORT        BUFFALO        CHICAGO     CINCINNATI      CLEVELAND       COLUMBUS 
+  #           11              8              1             11              2             25 
+  #       DENVER        DETROIT         DULUTH     FALL RIVER   GRAND RAPIDS       HARTFORD 
+  #            8              1             18             15             18             17 
+  # INDIANAPOLIS    KANSAS CITY    LOS ANGELES      MILWAUKEE    MINNEAPOLIS      NASHVILLE 
+  #            2              8              4              2              3             42 
+  #    NEW HAVEN    NEW ORLEANS         NEWARK     PITTSBURGH     PROVIDENCE     READING.US 
+  #           20             27              8              8              5             31 
+  #     RICHMOND      ROCHESTER SALT LAKE CITY  SAN FRANCISCO        SEATTLE        SPOKANE 
+  #           14              8             15              8             11             29 
+  #  SPRINGFIELD       ST LOUIS         TOLEDO        TRENTON     WASHINGTON      WORCESTER 
+  #           13              2             13             20              4             27 
+
+
+##################################### BRIDGEPORT ##################################################
+Bridgeport_ts = ts(measles[measles$loc=="BRIDGEPORT" & measles$year %in% c(1920:1940),"cases"])
+ts.plot(na_interpolation(Bridgeport_ts),Bridgeport_ts,gpars = list(col=c(2,1)))
+#L'interpolation fonctionne donc:
+
+measlesUS[measlesUS$loc=="BRIDGEPORT","cases"]=na_interpolation(Bridgeport_ts)
+
+##################################### BUFFALO #####################################################
+Buffalo_ts = ts(measlesUS[measlesUS$loc=="BUFFALO","cases"])
+which(is.na(Buffalo_ts))
+
+ts.plot(na_interpolation(Buffalo_ts),Buffalo_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="BUFFALO","cases"] = na_interpolation(Buffalo_ts)
+
+##################################### CHICAGO #####################################################
+Chicago_ts = ts(measlesUS[measlesUS$loc=="CHICAGO","cases"])
+which(is.na(Chicago_ts))
+ts.plot(na_interpolation(Chicago_ts),Chicago_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="CHICAGO","cases"] = na_interpolation(Chicago_ts)
+which(is.na(measlesUS[measlesUS$loc=="CHICAGO",]))
+
+##################################### CINCINNATI ##################################################
+CINCINNATI_ts = ts(measlesUS[measlesUS$loc=="CINCINNATI","cases"])
+which(is.na(CINCINNATI_ts))
+ts.plot(na_interpolation(CINCINNATI_ts),CINCINNATI_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="CINCINNATI","cases"] = na_interpolation(CINCINNATI_ts)
+which(is.na(measlesUS[measlesUS$loc=="CINCINNATI",]))
+
+##################################### CLEVELAND ##################################################
+CLEVELAND_ts = ts(measlesUS[measlesUS$loc=="CLEVELAND","cases"])
+which(is.na(CLEVELAND_ts))
+ts.plot(na_interpolation(CLEVELAND_ts),CLEVELAND_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="CLEVELAND","cases"] = na_interpolation(CLEVELAND_ts)
+which(is.na(measlesUS[measlesUS$loc=="CLEVELAND",]))
+
+##################################### COLUMBUS ##################################################
+COLUMBUS_ts = ts(measlesUS[measlesUS$loc=="COLUMBUS","cases"])
+which(is.na(COLUMBUS_ts))
+ts.plot(na_interpolation(COLUMBUS_ts),COLUMBUS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="COLUMBUS","cases"] = na_interpolation(COLUMBUS_ts)
+which(is.na(measlesUS[measlesUS$loc=="COLUMBUS",]))
+
+##################################### DENVER ##################################################
+DENVER_ts = ts(measlesUS[measlesUS$loc=="DENVER","cases"])
+which(is.na(DENVER_ts))
+ts.plot(na_interpolation(DENVER_ts),DENVER_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="DENVER","cases"] = na_interpolation(DENVER_ts)
+which(is.na(measlesUS[measlesUS$loc=="DENVER",]))
+
+##################################### DETROIT ##################################################
+DETROIT_ts = ts(measlesUS[measlesUS$loc=="DETROIT","cases"])
+which(is.na(DETROIT_ts))
+ts.plot(na_interpolation(DETROIT_ts),DETROIT_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="DETROIT","cases"] = na_interpolation(DETROIT_ts)
+which(is.na(measlesUS[measlesUS$loc=="DETROIT",]))
+
+##################################### DULUTH ##################################################
+DULUTH_ts = ts(measlesUS[measlesUS$loc=="DULUTH","cases"])
+which(is.na(DULUTH_ts))
+ts.plot(na_interpolation(DULUTH_ts),DULUTH_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="DULUTH","cases"] = na_interpolation(DULUTH_ts)
+which(is.na(measlesUS[measlesUS$loc=="DULUTH",]))
+
+##################################### FALL RIVER ##################################################
+FALLRIVER_ts = ts(measlesUS[measlesUS$loc=="FALL RIVER","cases"])
+which(is.na(FALLRIVER_ts))
+ts.plot(na_interpolation(FALLRIVER_ts),FALLRIVER_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="FALL RIVER","cases"] = na_interpolation(FALLRIVER_ts)
+which(is.na(measlesUS[measlesUS$loc=="FALL RIVER",]))
+
+##################################### GRAND RAPIDS ################################################
+GRANDRAPIDS_ts = ts(measlesUS[measlesUS$loc=="GRAND RAPIDS","cases"])
+which(is.na(GRANDRAPIDS_ts))
+ts.plot(na_interpolation(GRANDRAPIDS_ts),GRANDRAPIDS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="GRAND RAPIDS","cases"] = na_interpolation(GRANDRAPIDS_ts)
+which(is.na(measlesUS[measlesUS$loc=="GRAND RAPIDS",]))
+
+#################################### HARTFORD ################################################
+HARTFORD_ts = ts(measlesUS[measlesUS$loc=="HARTFORD","cases"])
+which(is.na(HARTFORD_ts))
+ts.plot(na_interpolation(HARTFORD_ts),HARTFORD_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="HARTFORD","cases"] = na_interpolation(HARTFORD_ts)
+which(is.na(measlesUS[measlesUS$loc=="HARTFORD",]))
+
+#################################### INDIANAPOLIS ################################################
+INDIANAPOLIS_ts = ts(measlesUS[measlesUS$loc=="INDIANAPOLIS","cases"])
+which(is.na(INDIANAPOLIS_ts))
+ts.plot(na_interpolation(INDIANAPOLIS_ts),INDIANAPOLIS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="INDIANAPOLIS","cases"] = na_interpolation(INDIANAPOLIS_ts)
+which(is.na(measlesUS[measlesUS$loc=="INDIANAPOLIS",]))
+
+#################################### KANSAS CITY ################################################
+KANSASCITY_ts = ts(measlesUS[measlesUS$loc=="KANSAS CITY","cases"])
+which(is.na(KANSASCITY_ts))
+ts.plot(na_interpolation(KANSASCITY_ts),KANSASCITY_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="KANSAS CITY","cases"] = na_interpolation(KANSASCITY_ts)
+which(is.na(measlesUS[measlesUS$loc=="KANSAS CITY",]))
+
+#################################### LOS ANGELES ################################################
+LOSANGELES_ts = ts(measlesUS[measlesUS$loc=="LOS ANGELES","cases"])
+which(is.na(LOSANGELES_ts))
+ts.plot(na_interpolation(LOSANGELES_ts),LOSANGELES_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="LOS ANGELES","cases"] = na_interpolation(LOSANGELES_ts)
+which(is.na(measlesUS[measlesUS$loc=="LOS ANGELES",]))
+
+#################################### MILWAUKEE ################################################
+MILWAUKEE_ts = ts(measlesUS[measlesUS$loc=="MILWAUKEE","cases"])
+which(is.na(MILWAUKEE_ts))
+ts.plot(na_interpolation(MILWAUKEE_ts),MILWAUKEE_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="MILWAUKEE","cases"] = na_interpolation(MILWAUKEE_ts)
+which(is.na(measlesUS[measlesUS$loc=="MILWAUKEE",]))
+
+#################################### MINNEAPOLIS ################################################
+MINNEAPOLIS_ts = ts(measlesUS[measlesUS$loc=="MINNEAPOLIS","cases"])
+which(is.na(MINNEAPOLIS_ts))
+ts.plot(na_interpolation(MINNEAPOLIS_ts),MINNEAPOLIS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="MINNEAPOLIS","cases"] = na_interpolation(MINNEAPOLIS_ts)
+which(is.na(measlesUS[measlesUS$loc=="MINNEAPOLIS",]))
+
+#################################### NASHVILLE ################################################
+NASHVILLE_ts = ts(measlesUS[measlesUS$loc=="NASHVILLE","cases"])
+which(is.na(NASHVILLE_ts))
+ts.plot(na_interpolation(NASHVILLE_ts),NASHVILLE_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="NASHVILLE","cases"] = na_interpolation(NASHVILLE_ts)
+which(is.na(measlesUS[measlesUS$loc=="NASHVILLE",]))
+
+#################################### NEW HAVEN ################################################
+NEWHAVEN_ts = ts(measlesUS[measlesUS$loc=="NEW HAVEN","cases"])
+which(is.na(NEWHAVEN_ts))
+ts.plot(na_interpolation(NEWHAVEN_ts),NEWHAVEN_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="NEW HAVEN","cases"] = na_interpolation(NEWHAVEN_ts)
+which(is.na(measlesUS[measlesUS$loc=="NEW HAVEN",]))
+
+#################################### NEW ORLEANS ################################################
+NEWORLEANS_ts = ts(measlesUS[measlesUS$loc=="NEW ORLEANS","cases"])
+which(is.na(NEWORLEANS_ts))
+ts.plot(na_interpolation(NEWORLEANS_ts),NEWORLEANS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="NEW ORLEANS","cases"] = na_interpolation(NEWORLEANS_ts)
+which(is.na(measlesUS[measlesUS$loc=="NEW ORLEANS",]))
+
+#################################### NEWARK ################################################
+NEWARK_ts = ts(measlesUS[measlesUS$loc=="NEWARK","cases"])
+which(is.na(NEWARK_ts))
+ts.plot(na_interpolation(NEWARK_ts),NEWARK_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="NEWARK","cases"] = na_interpolation(NEWARK_ts)
+which(is.na(measlesUS[measlesUS$loc=="NEWARK",]))
+
+#################################### PITTSBURGH ################################################
+PITTSBURGH_ts = ts(measlesUS[measlesUS$loc=="PITTSBURGH","cases"])
+which(is.na(PITTSBURGH_ts))
+ts.plot(na_interpolation(PITTSBURGH_ts),PITTSBURGH_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="PITTSBURGH","cases"] = na_interpolation(PITTSBURGH_ts)
+which(is.na(measlesUS[measlesUS$loc=="PITTSBURGH",]))
+
+#################################### PROVIDENCE ################################################
+PROVIDENCE_ts = ts(measlesUS[measlesUS$loc=="PROVIDENCE","cases"])
+which(is.na(PROVIDENCE_ts))
+ts.plot(na_interpolation(PROVIDENCE_ts),PROVIDENCE_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="PROVIDENCE","cases"] = na_interpolation(PROVIDENCE_ts)
+which(is.na(measlesUS[measlesUS$loc=="PROVIDENCE",]))
+
+
+#################################### READING.US ################################################
+READING.US_ts = ts(measlesUS[measlesUS$loc=="READING.US","cases"])
+which(is.na(READING.US_ts))
+ts.plot(na_interpolation(READING.US_ts),READING.US_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="READING.US","cases"] = na_interpolation(READING.US_ts)
+which(is.na(measlesUS[measlesUS$loc=="READING.US",]))
+
+#################################### RICHMOND ################################################
+RICHMOND_ts = ts(measlesUS[measlesUS$loc=="RICHMOND","cases"])
+which(is.na(RICHMOND_ts))
+ts.plot(na_interpolation(RICHMOND_ts),RICHMOND_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="RICHMOND","cases"] = na_interpolation(RICHMOND_ts)
+which(is.na(measlesUS[measlesUS$loc=="RICHMOND",]))
+
+#################################### ROCHESTER ################################################
+ROCHESTER_ts = ts(measlesUS[measlesUS$loc=="ROCHESTER","cases"])
+which(is.na(ROCHESTER_ts))
+ts.plot(na_interpolation(ROCHESTER_ts),ROCHESTER_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="ROCHESTER","cases"] = na_interpolation(ROCHESTER_ts)
+which(is.na(measlesUS[measlesUS$loc=="ROCHESTER",]))
+
+#################################### SALT LAKE CITY ##############################################
+SALTLAKECITY_ts = ts(measlesUS[measlesUS$loc=="SALT LAKE CITY","cases"])
+which(is.na(SALTLAKECITY_ts))
+ts.plot(na_interpolation(SALTLAKECITY_ts),SALTLAKECITY_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="SALT LAKE CITY","cases"] = na_interpolation(SALTLAKECITY_ts)
+which(is.na(measlesUS[measlesUS$loc=="SALT LAKE CITY",]))
+
+#################################### SAN FRANCISCO ################################################
+SANFRANCISCO_ts = ts(measlesUS[measlesUS$loc=="SAN FRANCISCO","cases"])
+which(is.na(SANFRANCISCO_ts))
+ts.plot(na_interpolation(SANFRANCISCO_ts),SANFRANCISCO_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="SAN FRANCISCO","cases"] = na_interpolation(SANFRANCISCO_ts)
+which(is.na(measlesUS[measlesUS$loc=="SAN FRANCISCO",]))
+
+#################################### SEATTLE ################################################
+SEATTLE_ts = ts(measlesUS[measlesUS$loc=="SEATTLE","cases"])
+which(is.na(SEATTLE_ts))
+ts.plot(na_interpolation(SEATTLE_ts),SEATTLE_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="SEATTLE","cases"] = na_interpolation(SEATTLE_ts)
+which(is.na(measlesUS[measlesUS$loc=="SEATTLE",]))
+
+#################################### SPOKANE ################################################
+SPOKANE_ts = ts(measlesUS[measlesUS$loc=="SPOKANE","cases"])
+which(is.na(SPOKANE_ts))
+ts.plot(na_interpolation(SPOKANE_ts),SPOKANE_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="SPOKANE","cases"] = na_interpolation(SPOKANE_ts)
+which(is.na(measlesUS[measlesUS$loc=="SPOKANE",]))
+
+#################################### SPRINGFIELD ################################################
+SPRINGFIELD_ts = ts(measlesUS[measlesUS$loc=="SPRINGFIELD","cases"])
+which(is.na(SPRINGFIELD_ts))
+ts.plot(na_interpolation(SPRINGFIELD_ts),SPRINGFIELD_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="SPRINGFIELD","cases"] = na_interpolation(SPRINGFIELD_ts)
+which(is.na(measlesUS[measlesUS$loc=="SPRINGFIELD",]))
+
+####################################  ST LOUIS ################################################
+ STLOUIS_ts = ts(measlesUS[measlesUS$loc=="ST LOUIS","cases"])
+which(is.na( STLOUIS_ts))
+ts.plot(na_interpolation( STLOUIS_ts),STLOUIS_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="ST LOUIS","cases"] = na_interpolation( STLOUIS_ts)
+which(is.na(measlesUS[measlesUS$loc==" ST LOUIS",]))
+
+#################################### TOLEDO ################################################
+TOLEDO_ts = ts(measlesUS[measlesUS$loc=="TOLEDO","cases"])
+which(is.na(TOLEDO_ts))
+ts.plot(na_interpolation(TOLEDO_ts),TOLEDO_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="TOLEDO","cases"] = na_interpolation(TOLEDO_ts)
+which(is.na(measlesUS[measlesUS$loc=="TOLEDO",]))
+
+#################################### TRENTON ################################################
+TRENTON_ts = ts(measlesUS[measlesUS$loc=="TRENTON","cases"])
+which(is.na(TRENTON_ts))
+ts.plot(na_interpolation(TRENTON_ts),TRENTON_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="TRENTON","cases"] = na_interpolation(TRENTON_ts)
+which(is.na(measlesUS[measlesUS$loc=="TRENTON",]))
+
+#################################### WASHINGTON ################################################
+WASHINGTON_ts = ts(measlesUS[measlesUS$loc=="WASHINGTON","cases"])
+which(is.na(WASHINGTON_ts))
+ts.plot(na_interpolation(WASHINGTON_ts),WASHINGTON_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="WASHINGTON","cases"] = na_interpolation(WASHINGTON_ts)
+which(is.na(measlesUS[measlesUS$loc=="WASHINGTON",]))
+
+#################################### WORCESTER ################################################
+WORCESTER_ts = ts(measlesUS[measlesUS$loc=="WORCESTER","cases"])
+which(is.na(WORCESTER_ts))
+ts.plot(na_interpolation(WORCESTER_ts),WORCESTER_ts,gpars = list(col=c(2,1)))
+#Bonne reconstruction
+measlesUS[measlesUS$loc=="WORCESTER","cases"] = na_interpolation(WORCESTER_ts)
+which(is.na(measlesUS[measlesUS$loc=="WORCESTER",]))
+```
+```{r,echo=FALSE,out.width="60%",fig.align="center",fig.cap="Interpolation des données pour Buffalo"}
+ts.plot(na_interpolation(Buffalo_ts),Buffalo_ts,gpars = list(col=c(2,1)),ylab="Infectés",xlab="Temps",main="Buffalo")
+
+```
+
+Une fois les données manquantes complétées nous avons créé deux listes de jeux de données (une pour les Etats-Unis et une pour le Royaume-Uni, puis nous avons remplacé les valeurs correspondant à 0 cas infectés par 0.1 afin de pouvoir passer au log durant l'estimation des paramètres de chaque série. 
+```{r,echo=FALSE}
+#On remplace les 0 par des 1 dans I car on ne peut pas passer au log
+
+##On remplace les 0 par des 1
+split_df = split(measlesUS,measlesUS$loc)
+split_df_UK= split(measlesUK,measlesUK$loc)
+
+df_no0= function(x)
+{for(i in 1:length(x))
+{
+  #x[[i]]$cases[which(x[[i]]$cases==0)]=0.1
+  x[[i]]$cases=x[[i]]$cases+0.1
+}
+  return(x)
+  }
+
+split_df_no0= df_no0(split_df)
+split_df_no0_UK= df_no0(split_df_UK)
+
+```
+
+Ensuite nous créeons une fonction qui pourra effectuer des simulations pour plusieurs jeux de paramètres et de conditions initiales à la fois. (c.f. annexe)
+
+```{r,echo=FALSE}
+#FONCTION SIMULATION pour plusieurs jeux de données:
+ mass_sim = function(parm, intit.cond){
+  res_ = vector(mode = "list", length = length(parm))
+  names(res_)= names(parm)
+  for(i in c(1:length(parm)))
+  {
+   x= SimTsir2(beta = parm[[i]]$beta_,alpha = parm[[i]]$alpha_,N=rep(mean(parm[[i]]$Pop),5201),B=rep(mean(parm[[i]]$Bi),5201),inits =list(Snull=intit.cond[[i]]$S0,Inull = intit.cond[[i]]$I0),type=1)
+   res_[[i]]=x
+  }
+  return(res_)
+ }
+```
+
+### Simulations
+
+Ainsi nous pouvons désormais estimer les paramètres pour chaque jeu de données et effectuer des simulations pour chaque jeu de paramètres estimés. 
+
+Dans la suite, nous fixerons $\bar S = 0.035$ et $\alpha=0.975$ et nous n'estimerons donc que $\beta_t$ comme dans l'article par souci de comparaison. Il a été montré que la modification de $\bar S$  n'affecte pas les résultats et que le choix de $\alpha=0.975$ donne de bonnes performances [@1]. Cependant, il est important de noter que d'après notre experience, les résultats se sont néanmoins montrés très sensibles à la valeur de $\alpha$.
+
+
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+params_US2= lapply(split_df_no0,function(x){param_estim2(x)})
+param_UK2 = lapply(split_df_no0_UK,function(x){param_estim2(x)})
+params_US= lapply(split_df_no0,function(x){param_estim2(x)})
+param_UK = lapply(split_df_no0_UK,function(x){param_estim2(x)})
+```
+Afin de tester la fonction simulant la population infectée, voici le résultat de la simulation déterministe à partir de la première valeur $I_0$ observée sur la série de Londres et de la première valeur de la population susceptible estimée comme condition initiale. Nous évaluons la précision des simulations et des prédictions en calculant le MSE entre entre la série simulée et les données observées, c'est à dire: 
+$$MSE = \frac1t\sum\limits_{i=0}^t (I_i - \hat I_i)^2$$ Avec $\hat I_t$ la série simulée à l'instant t. 
+
+```{r,include=FALSE,out.width="50%",fig.cap="Comparaison de la simulation déterministe avec les données"}
+res3 = runtsir(data = modeldata,xreg="cumbirths",method = "deterministic",regtype='spline')
+```
+```{r,echo=FALSE,fig.align="center",out.width="50%",message=FALSE,fig.cap="Comparaison des simulations aux données"}
+#test de la fonction
+
+
+res_tsir2= SimTsir2(beta,alpha,modeldata$births,modeldata$pop,inits=list(Snull=exp(Susc_ldn_rec[1]),Inull=I_t[1]/rho[1]),type=2)
+# 
+ res_tsir3= SimTsir2(beta,alpha,modeldata$births,modeldata$pop,inits=list(Snull=exp(Susc_ldn_rec[1]),Inull=I_t[1]/rho[1]),type=1)
+
+plot(modeldata$cases[1:546],type='l',ylim=c(0,10000),xlab="temps",ylab="I",main="Qualité de la simulation déterministe")
+lines(res_tsir3$I,col='red')
+lines(res3$res$V1,col='green')
+legend("topright",c("Modèle","Package tsiR","Données observées"),lty=1,col=c("red","green","black"))
+
+paste("MSE_déterministe_tsiR =",round((1/length(modeldata$cases))*sum((res3$res$V1-modeldata$cases)^2)))
+paste("MSE_déterministe=",round((1/length(modeldata$cases))*sum((res_tsir3$I*rho-modeldata$cases)^2)))
+
+```
+
+On observe que la simulation déterministe capte bien la périodicité annuelle des épidémies de la rougeole à Londres, cependant certaines périodes où il n'y a pas eu d'épidémies ne sont pas pris en compte par le modèle déterministe. On peut aussi observer que la simulation du package tsiR capte moins bien certains pics que la simulation que nous avons effectuée, d'où la meilleure performance de notre simulation. 
+Afin d'évaluer précisément la qualité du modèle stochastique, nous procédons par méthode de Monte Carlo en effectuant 100 simulations stochastiques avec notre propre fonction et celle du package tsiR. Puis nous moyennons les 100 valeurs du MSE (Mean Squared Error).
+```{r,include=FALSE}
+  res4 = runtsir(data = modeldata,xreg="cumbirths",method = "negbin",regtype='spline',nsim=100)
+```
+
+```{r,fig.show="hold",out.width="50%",echo=FALSE,message=FALSE,fig.cap="Comparaison des simulations stochastiques"}
+MSE_tsir=c(1:100)
+MSE_propre= c(1:100)
+
+
+  data_fsto= matrix(nrow = 521,ncol=100)
+  plot(modeldata$cases,type='l',xlab='temps',ylab="I",main="100 simulations stochastiques")
+  
+
+for(i in c(1:100))
+{
+  res_tsir4= SimTsir2(beta,alpha,modeldata$births,modeldata$pop,inits=list(Snull=exp(Susc_ldn_rec[1]),Inull=I_t[1]/rho[1]),type=2)
+  lines(res_tsir4$I*rho,col="red")
+  data_fsto[,i]=res_tsir4$I*rho
+  MSE_propre[i]=(1/521)*sum((res_tsir4$I*rho-modeldata$cases)^2)
+}
+  MC_det = lapply(data_fsto,mean)
+  lines(unlist(MC_det),col='purple',lwd=2)
+  lines(modeldata$cases)
+    legend("topright", c("Simulations","Moyenne","Données"),lty=1,col=c("red","purple","black"),cex=0.5)
+
+  data_fsto2= matrix(nrow = 521,ncol=100)
+  plot(modeldata$cases,type='l',xlab='temps',ylab="I",main="100 simulations stochastiques avec package tsiR")
+for(i in c(1:100))
+{
+  lines(res4$res[,i],col="green")
+  data_fsto2[,i]=res4$res[,i]
+    
+}
+  MSE_tsir = apply(res4$res[,1:100],2,function(x)return((1/521)*sum((x-modeldata$cases)^2)))
+  MC_det2 = lapply(data_fsto2,mean)
+  lines(unlist(MC_det2),col='purple',lwd=2)
+  lines(modeldata$cases)
+  legend("topright", c("Simulations","Moyenne","Données"),lty=1,col=c("green","purple","black"),cex=0.5)
+  
+  plot(MSE_propre,type='l',col='red',xlab="numéro de simulation", ylab="MSE",ylim=c(0,0.5e7))
+  lines(MSE_tsir,col="green")
+  legend("bottomright", c("Notre fonction","Package tsiR"),lty=1,col=c("red","green"),cex=0.7)
+  
+paste("MSE de la série moyénée tsiR = ",round((1/521)*sum((modeldata$cases - unlist(MC_det2))^2)))
+paste("MSE de la série moyénée  = ",round((1/521)*sum((modeldata$cases - unlist(MC_det))^2)))
+
+
+```
+
+
+On observe que notre implémentation du modèle stochastique s'ajuste mieux aux données que celle du package tsiR aussi bien au niveau stochastique que au niveau déterministe. En effet nous obtenons un meilleur MSE sur la série moyénnant les 100 simulations stochastiques, c'est à dire:
+$$\frac1t\sum\limits_{i=0}^t(\hat Y_t-I_t)^2$$ avec
+$$ \hat Y_t= \frac1n \sum\limits_{i=0}^n\hat I_t^i$$ où $\hat I^i_t$ correspond à la i-ème simulation stochastique à l'instant t
+et un meilleur MSE sur la simulation déterministe. On observe aussi sur le troisième graphe ci-dessus que la quasi-totalité des 100 simulations stochastiques que nous avons implementé a un meilleur MSE que ceux des simulations stochastiques du package tsiR. Enfin on observe que les deux méthodes captent bien les pics d'épidémie de la rougeole et les cycles bienniaux. 
+ 
+ Cependant, cela n'est pas une prédiction, car nous estimons les paramètres sur la totalité des données observées, cela montre juste que l'on explique bien les données. Ainsi, les travaux publiés dans l'article de Dalziel sur la précision du modèle par rapport aux données observées n'est pas une vraie prédiction. Les auteurs en sont conscient, en effet Otto Bjørnstad qualifie la comparaison des simulations aux données observées de "postdiction" et estime que le fait que le modèle capture bien les pics d'épidémies et la periodicité sur les données est déjà remarquable.[@6]
+
+### Prédictions
+ Nous avons néanmoins tenté d'effectuer une réelle prédiction en estimant les paramètres sur les 300 premières observations du jeu de données de Londres puis de prédire les valeurs suivantes. Ceci n'a pas été effectué sur l'article de référence. Les valeurs $\alpha$ et $\bar S$ étant fixées les seuls paramètres estimés sont les 26 valeurs de $\beta_t$. Voici les résultats de la prédiction (rouge) obtenus pour le modèle stochastique et le modèle déterministe comparés aux données observées: 
+ 
+```{r,fig.show="hold",echo=FALSE,out.width="50%",message=FALSE,fig.cap="Comparaison des prédictions du modèle"}
+
+##Fonction simulant une prédiction
+SimTsir3=function(beta, alpha, B, N, inits = list(Snull = 0, Inull = 0), type = 1,dfff,line)
+  {
+  df1=dfff
+IT = length(B)
+s = length(beta) 
+lambda = rep(NA, IT) 
+I = rep(NA, IT)
+S = rep(NA, IT)
+I[1] = inits$Inull
+
+lambda[1] = inits$Inull
+
+S[1] = inits$Snull
+
+
+for(i in 2:IT) 
+  {
+lambda[i] = beta[((i-2) %% s)+1]*S[i - 1]*(I[i - 1]^alpha)/N[i-1]
+
+if(type == 3) 
+{I[i] = lambda[i]
+df1$cases[line+i-1]=I[i]
+new_par=NULL
+}
+if(type == 4) 
+{I[i] = rnbinom(1,mu=lambda[i],size=I[i-1]+1e-10)
+df1$cases[line+i-1]=I[i]
+new_par=NULL
+}
+
+S[i] =max(S[i - 1] + B[i-1] - I[i],1)
+
+  }
+return(list(I = I, S = S,df=df1,par=new_par)) 
+}
+
+
+data_forecast= split_df_no0_UK$LONDON
+data_forecast$cases[301:521]=NA
+param_London = param_estim2(data_forecast[1:300,])
+
+Naissance_futur = data_forecast$births[301:521]
+Population_futur = data_forecast$pop[301:521]
+
+pred= SimTsir3(param_London$beta_,alpha=0.975,B=Naissance_futur,N =Population_futur,inits = list(Snull=param_London$Suc[299],Inull=data_forecast$cases[299]),type = 3,df=data_forecast,line=300)
+
+plot(pred$df$cases[1:520],type='l',col='red',xlab="Temps (2 semaines)",ylab="Population infectée",main="Déterministe")
+lines(split_df_no0_UK$LONDON$cases,col='black')
+
+
+pred2= SimTsir3(param_London$beta_,alpha=0.975,B=Naissance_futur,N =Population_futur,inits = list(Snull=param_London$Suc[299],Inull=data_forecast$cases[299]),type = 4,df=data_forecast,line=300)
+
+plot(pred2$df$cases[1:520],type='l',col='red',xlab="Temps (2 semaines)",ylab="Population infectée",main="Stochastique")
+lines(split_df_no0_UK$LONDON$cases[1:520],col='black')
+
+
+paste("MSE_deterministe=",round((1/520)*sum((pred$df$cases[1:520]-split_df_no0_UK$LONDON$cases[1:520])^2)))
+paste("MSE_stochastique=",round((1/520)*sum((pred2$df$cases[1:520]-split_df_no0_UK$LONDON$cases[1:520])^2)))
+# 
+#  for(i in c(1:220))
+# {
+#   pred= SimTsir2(param_London$beta_,0.975,B=Naissance_futur[i],N =Population_futur[i],inits = list(Snull=param_London$Suc[300+i-1],Inull=data_forecast$cases[300+i-1]),type = 3)
+#   data_forecast$cases[300+i]=pred$I
+#   print(pred$I)
+#   param_London = param_estim2(data_forecast[1:(300+i),])
+#   
+# }
+```
+
+On observe que les cycles semblent respectés, cependant les pics sont fortement décalés.
+
+### Périodogrammes
+Ayant désormais estimé les paramètres pour les 80 jeux de données, nous effectuons 100 simulations selon le modèle stochastique afin de comparer l'ajustement des périodogrammes avec celui des données observées. En effet, nous souhaitons observer si les simulations stochastiques capturent bien la periodicité des épidémies par rapport aux données observées. 
+
+```{r,echo=FALSE,message=FALSE}
+
+sim_la = SimTsir2(alpha = params_US2$`LOS ANGELES`$alpha_,B = params_US2$`LOS ANGELES`$Bi,N = params_US2$`LOS ANGELES`$Pop,beta = params_US2$`LOS ANGELES`$beta_,inits = list(Snull=params_US2$`LOS ANGELES`$Suc[1],Inull=split_df_no0$`LOS ANGELES`$cases[1]/params_US2$`LOS ANGELES`$rho_hat[1]),type=1)
+
+
+
+sim_bos = SimTsir2(alpha = params_US2$BOSTON$alpha_,B = params_US2$BOSTON$Bi,N = params_US2$BOSTON$Pop,beta = params_US2$BOSTON$beta_,inits = list(Snull=params_US2$BOSTON$Suc[1],Inull=split_df_no0$BOSTON$cases[1]/params_US2$BOSTON$rho_hat[1]),type=1)
+
+
+sim_london = SimTsir2(alpha = param_UK2$LONDON$alpha_,B = param_UK2$LONDON$Bi,N = param_UK2$LONDO$Pop,beta = param_UK2$LONDON$beta_,inits = list(Snull=param_UK2$LONDON$Suc[1],Inull=split_df_no0_UK$LONDON$cases[1]/param_UK2$LONDON$rho_hat[1]),type=2)
+
+
+sim_ny1 = SimTsir2(alpha = params_US2$`NEW YORK`$alpha_,B = params_US2$`NEW YORK`$Bi,N = params_US2$`NEW YORK`$Pop,beta = params_US2$`NEW YORK`$beta_,inits = list(Snull=params_US2$`NEW YORK`$Suc[1],Inull=split_df_no0$`NEW YORK`$cases[1]/params_US2$`NEW YORK`$rho_hat[1]),type=1)
+
+```
+
+
+```{r,fig.show="hold",echo=FALSE,out.width="40%",fig.cap="Ajustement des Spectrogrammes de 100 simulations stochastiques"}
+spec_london= spectrum(split_df_no0_UK$LONDON$cases,plot="FALSE",span=4)
+spec_boston= spectrum(split_df_no0$BOSTON$cases,plot="FALSE")
+spec_ny= spectrum(split_df_no0$`NEW YORK`$cases,plot="FALSE")
+
+#data
+#### LONDON 
+plot(1/spec_london$freq/26,spec_london$spec,type='l',xlim = c(0,5),ylim=c(0,3.7e8),xlab="Periode",ylab="Intensité",main= "LONDON")
+for(i in 1:100){
+res_tsir2= SimTsir2(param_UK2$LONDON$beta_,param_UK2$LONDON$alpha_,param_UK2$LONDON$Bi,param_UK2$LONDON$Pop,inits=list(Snull=param_UK2$LONDON$Suc[1],Inull=split_df_no0_UK$LONDON$cases[1]),type=2)
+spec= spectrum(res_tsir2$I,plot=FALSE,span=4)
+lines(1/spec$freq/26,spec$spec,col='red')
+}
+lines(1/spec_london$freq/26,spec_london$spec)
+legend("topright",c("Simulations","Données"),lty=1,col=c("red","black"),cex=0.7)
+### BOSTON 
+plot(1/spec_boston$freq/26,spec_boston$spec,type='l',xlim = c(0,5),ylim=c(0,1e7),xlab="periode",ylab="Intensité",main="BOSTON")
+for(i in 1:100){
+res_tsir2= SimTsir2(params_US2$BOSTON$beta_,params_US2$BOSTON$alpha_,params_US2$BOSTON$Bi,params_US2$BOSTON$Pop,inits=list(Snull=params_US2$BOSTON$Suc[1],Inull=split_df_no0$BOSTON$cases[1]),type=2)
+spec= spectrum(res_tsir2$I,plot=FALSE)
+lines(1/spec$freq/26,spec$spec,col='red')
+}
+lines(1/spec_boston$freq/26,spec_boston$spec)
+legend("topright",c("Simulations","Données"),lty=1,col=c("red","black"),cex=0.7)
+
+
+#### NEW YORK
+plot(1/spec_ny$freq/26,spec_ny$spec,type='l',xlim = c(0,5),ylim=c(0,1.5e8),xlab="Periode",ylab="Intensité",main = "NEW YORK")
+for(i in 1:100){
+res_tsir2= SimTsir2(params_US2$`NEW YORK`$beta_,params_US2$`NEW YORK`$alpha_,params_US2$`NEW YORK`$Bi,params_US2$`NEW YORK`$Pop,inits=list(Snull=params_US2$`NEW YORK`$Suc[1],Inull=split_df_no0$`NEW YORK`$cases[1]),type=2)
+spec= spectrum(res_tsir2$I*params_US2$`NEW YORK`$rho_hat,plot=FALSE)
+lines(1/spec$freq/26,spec$spec,col='red')
+}
+lines(1/spec_ny$freq/26,spec_ny$spec)
+legend("topright",c("Simulations","Données"),lty=1,col=c("red","black"),cex=0.7)
+
+
+```
+
+On observe que malgré des différences au niveau de l'intensité, les periodogrammes s'alignent bien au niveau des fréquences prépondérantes. Ceci signifie que le modèle capture bien la periodicité des épidémies dans chaque ville. On observe cependant un bien meilleur ajustement des spectogrammes à Londres. En effet, les periodogrammes des simulations stochastiques pour les villes américaines dévient beaucoup plus du spéctogramme observé pour les fréquences élevées que par rapport au cas de Londres, ce qui peut laisser supposer que les cycles sont plus instables aux Etats-Unis car les cycles y sont moins réguliers et de periodicité moyenne plus importante. 
+
+## Nature chaotique des épidémies causée par des perturbations sur la période de basse transmission:
+
+En tracant les boxplots des 26 valeurs estimées $\beta_t$ de chaque villes aux Etats-Unis et au Royaume Uni et en les comparant, on observe une periode de basse transmission s'étendant environ de fin juillet à fin septembre (soit 2 mois) au Royaume-uni. Cependant on observe qu'aux Etats-Unis, la période de basse transmission est entre mi-mai et fin septembre (soit envrion 5 mois) et qu'elle est de plus forte amplitude. On observe donc une plus longue periode de basse transmission aux Etats-unis ainsi qu'une plus forte amplitude qu'au Royaume-Uni.
+  
+```{r,fig.show="hold",echo=FALSE,out.width="50%",fig.cap="Boxplot de beta au Royaume Uni (Gauche) et aux EU (Droite)"}
+times=c(1:26)
+x=lubridate::ymd( "2017-01-01" ) + lubridate::weeks( 2*times )
+x=lubridate::month(x,label=TRUE)
+beta_UK = lapply(param_UK,function(x)return(x$beta_))
+df_beta_UK=as.data.frame(beta_UK)
+df_beta_UK$times=x
+boxplot(t(as.data.frame(beta_UK)),names=df_beta_UK$times,ylab="beta RU",main="Royaume-Uni")
+abline(h=30)
+
+
+beta_US = lapply(params_US,function(x)return(x$beta_))
+df_beta_US= as.data.frame(beta_US)
+df_beta_US$times=x
+boxplot(t(df_beta_US[,1:26]),names=df_beta_US$times,ylab="beta EU",main="Etats-Unis")
+abline(h=40)
+
+
+```
+
+Comme expliqué précédement, nous souhaitons montrer que cette différence sur la période de basse transmission affecte les cycles d'épidémies de la rougeole aux Etats-Unis résultant en une périodicité plus élevée et des cycles plus irréguliers c'est à dire instables.
+
+### Exposants globaux de Lyapunov
+
+Afin de le montrer,  nous reproduisons les résultats de l'article de référence en calculant les exposants globaux de Lyapunov sur des simulations du modèle déterministe 100 ans en avant avec 100 ans de 'burn phase', c'est à dire simuler sur 200 ans en ne tenant compte que des 100 dernières années. 
+
+Les coefficients de Lyapunov mesurent la stabilité d'un système à travers le calcul du log du taux moyen d'accroissement, c'est une mesure de la propagation de l'erreur donc de la stabilité d'un système dynamique. Un coefficient négatif indique que le système est stable tandis que si il est positif cela signifie que le système est instable. 
+
+Dans le cas d'une fonction  $f: \mathbb{R^N} \rightarrow \mathbb{R^N}$
+
+$$\lambda = \lim_{n\rightarrow\infty}\frac1n \sum\limits_{t=1}^n
+\log(\Vert J_t U_0\Vert) $$ [@1] avec
+$$U0= (1,0,...,0)  \text{ et } J_t \text{ la jacobienne à l'instant t}$$
+
+Dans notre cas on a:
+
+$$(S_{t+1},I_{t+1})=(S_t + B_t -  \beta_s I_t^{\alpha}S_tN_t^{-1},\beta_s I_t^{\alpha}S_tN_t^{-1})= f(S_t,I_t)$$ et donc $U_0=(1,0)$ la jacobienne vaut: 
+$$ \begin{pmatrix}
+1-\beta_s I^{\alpha}/N_t & -\beta_s S_t(I_t^{\alpha-1}\alpha/N_t)\\
+\beta_sI_t^{\alpha}/N_t & \beta_s S_t(I_t^{\alpha -1}\alpha)/N_t
+\end{pmatrix}$$
+
+Nous créeons donc une fonction $\texttt{lyapunov}$ calculant le coefficient associé à un sytème étant donné les paramètres estimés et les séries de la population susceptible et des cas infectés pour un ville donnée. (c.f annexe pour l'implémentation de la fonction lyapunov)
+
+```{r,echo=FALSE}
+lyapunov=function(I,S,alpha,b,N){
+    len=length(I)
+    s = length(b)
+    j11=rep(0,len)
+    j12 = rep(0,len)
+    j21 = rep(0,len)
+    j22 = rep(0,len)
+    J= matrix(c(1,0),ncol=1)
+    
+    for(i in 1:len){
+      j11[i]=1 - b[(i-1)%%s +1]  * (I[i]^alpha)/N
+      j12[i]= - b[(i-1)%%s+1]*S[i]*(I[i]^(alpha-1))*alpha/N
+      j21[i]= b[(i-1)%%s+1]*(I[i]^alpha)/N
+      j22[i] = b[(i-1)%%s+1]*S[i]*((I[i]^(alpha-1))*alpha)/N
+      J= matrix(c(j11[i],j12[i],j21[i],j22[i]),ncol=2,byrow = T)%*%J
+    }
+    res= list(lypunov_exp=log(norm(J))/len,j11_=j11,j12_=j12,j21_=j21,
+              j22_=j22,S=S,I=I,alpha=alpha)
+    return(res)
+}
+
+```
+
+Dans le but de tester cette fonction nous effectuons une simulation de 100 ans à partir du modèle deterministe pour New York en gardant la taille de la population et la natalité constante.(c.f annexe pour accéder au code) On obtient un coefficient de Lyapunov positif ce qui est donc cohérent avec  l'hypothèse que les cycles de la rougeole aux Etats-unis sont instables.
+```{r,message=FALSE,out.width="60%",echo=FALSE}
+param_NY = param_estim2(split_df_no0$`NEW YORK`)
+res_tsir_ny= SimTsir2(param_NY$beta_,0.975,rep(mean(split_df_no0$`NEW YORK`$births),5201)
+                      ,rep(mean(split_df_no0$`NEW YORK`$pop),5201),inits=list(Snull=param_NY$Suc[1],
+  Inull=split_df_no0$`NEW YORK`$cases[1]/param_NY$rho_hat[1]),type=1)
+
+
+lyapNY= lyapunov(res_tsir_ny$I[2601:5200],res_tsir_ny$S[2601:5200],
+                 alpha = 0.975,param_NY$beta_,
+                 N=mean(split_df_no0$`NEW YORK`$pop))
+paste("Exposant de Lyapunov pour New York = ",round(lyapNY$lypunov_exp,digits= 3))
+```
+
+
+Nous nous intéréssons maintenant à calculer  les coefficients de Lyapunov pour des simulations du modèle déterministe 100 ans en avant pour chaque ville.  Nous stockons les conditions initiales ($I_0$ comme la valeur initiale des infectés de la série observée et $S_0$ comme la première valeur de la série des susceptibles reconstruite).
+
+```{r,echo=FALSE,warning=FALSE}
+#Paramètres de chaque série
+params_US= lapply(split_df_no0,function(x){param_estim2(x)})
+param_UK = lapply(split_df_no0_UK,function(x){param_estim2(x)})
+#Conditions initiales pour les simulations de 100 ans:
+init_cond= lapply(params_US,function(x){return(list(S0=x$Suc[1],I0=x$It[1]/x$rho_hat[1]))})
+init_cond_UK= lapply(param_UK,function(x){return(list(S0=x$Suc[1],I0=x$It[1]/x$rho_hat[1]))})
+
+```
+
+
+Ensuite nous simulons selon le modèle déterministe pour chaque jeu de paramètres puis nous calculons les coefficients de Lyapunov pour chaque simulation. Enfin nous traçons les coefficients de Lyapunov et la proportion de periodes de deux semaines avec strictement moins de 1 cas en fonction de la taille moyenne de la population pour chaque ville. Nous choisissons de montrer la proportions de périodes avec moins de 1 cas car pour pouvoir passer au log nous avons ajouté 0.1 à toutes les valeurs de la série des cas infectés. Voici les résultats obtenus: 
+
+```{r,echo=FALSE}
+#FONCTION CALCUL LYAPUNOV
+test1= mass_sim(params_US,init_cond) # simulations US
+sim_UK = mass_sim(param_UK,init_cond_UK) #simulations UK
+
+lyap_compute= function(sim,parm)
+{
+  res_= vector(mode="list",length = length(sim))
+  meanpop_ = vector(mode="list",length = length(sim))
+  names(res_)=names(sim)
+  names(meanpop_)=names(sim)
+  for(i in 1:length(sim))
+  {
+    zoomI= sim[[i]]$I[2601:5200]
+    zoomS = sim[[i]]$S[2601:5200]
+    bb= parm[[i]]$beta_
+    lyapunov_exp = lyapunov(I=zoomI,S=zoomS,alpha=parm[[i]]$alpha_,b=bb,N=mean(parm[[i]]$Pop))
+    res_[[i]]=c(lyapunov_exp$lypunov_exp,mean(parm[[i]]$Pop))
+  }
+  return(res_)
+}
+```
+
+```{r,echo=FALSE,message=FALSE}
+test2=lyap_compute(test1,params_US)
+lyap_UK = lyap_compute(sim_UK,param_UK)
+```
+
+```{r,fig.show="hold",echo=FALSE,message=FALSE,out.width="50%",fig.cap="Exposants de Lyapunov (gauche) et proportion des cas <1 (droite)"}
+
+test2 = t(as.data.frame(test2))
+lyap_UK = t(as.data.frame(lyap_UK))
+plot(log10(test2[,2]),test2[,1],ylab="Exposant de Lyapunov",xlab="Taille population moyenne",main="Exposants de Lyapunov")
+
+points(log10(lyap_UK[,2]),lyap_UK[,1],pch=3)
+
+abline(h=0)
+abline(v=5.5,lty=2)
+text(5.5,0.4, "Taille critique population", pos = 2,cex=0.5,srt=90)
+legend("topright",c("Etats-Unis","Royaume-Uni"),pch=c(1,3))
+no_cases_US  = vector(mode="list",length = length(split_df_no0))
+names(no_cases_US)= names(split_df_no0)
+
+no_cases_UK  = vector(mode="list",length = length(split_df_no0_UK))
+names(no_cases_UK)= names(split_df_no0_UK)
+
+plot(1,1,xlim=c(5,7),ylim=c(0,0.7),xlab = "Taille moyenne de la pop (log10)",ylab="Proportion de periodes avec moins de 1 cas",main="Extinction des épidémies")
+for(i in c(1:length(split_df)))
+{
+  no_cases_US[[i]]$meanpop= mean(split_df_no0[[i]]$pop)
+  no_cases_UK[[i]]$meanpop= mean(split_df_no0_UK[[i]]$pop)
+  no_cases_US[[i]]$no_cases= sum(round(test1[[i]]$I[2601:5200])<1)/2599
+  no_cases_UK[[i]]$no_cases= sum(round(sim_UK[[i]]$I[2601:5200])<1)/2599
+  points(log10(no_cases_UK[[i]]$meanpo),no_cases_UK[[i]]$no_cases,pch=3)
+  #text(log10(no_cases_UK[[i]]$meanpo),no_cases_UK[[i]]$no_cases,labels = names(no_cases_UK)[i],cex=0.3,pos=3)
+  points(log10(no_cases_US[[i]]$meanpop),no_cases_US[[i]]$no_cases,pch=1)
+ # text(log10(no_cases_US[[i]]$meanpo),no_cases_US[[i]]$no_cases,labels = names(no_cases_US)[i],pos=3,cex=0.3)
+}
+abline(v=5.5,lty=2)
+text(5.5,0.4, "Taille critique population", pos = 2,cex=0.5,srt=90)
+legend("topright",c("Etats-Unis",'Royaume Uni'),pch=c(1,3))
+
+
+points(log10(lyap_UK[,2]),lyap_UK[,1],pch=3)
+
+abline(h=0)
+abline(v=5.5,lty=2)
+text(5.5,0.4, "Taille critique population", pos = 2,cex=0.5,srt=90)
+legend("topright",c("Etats-Unis","Royaume-Uni"),pch=c(1,3))
+no_cases_US  = vector(mode="list",length = length(split_df_no0))
+names(no_cases_US)= names(split_df_no0)
+
+no_cases_UK  = vector(mode="list",length = length(split_df_no0_UK))
+names(no_cases_UK)= names(split_df_no0_UK)
+
+```
+On observe que la totalité des exposants de Lyapunov correspondant aux villes du Royaume-Uni sont négatifs, ce qui correspond donc à des cycles stables de la rougeole alors que plus de 18 coefficients, chacun associé à une ville américaine, sont supérieurs ou égaux à 0. Il est donc clair que les cycle d'épidémies de rougeole aux Etats-Unis présentent une instabilité. 
+
+De plus sur la deuxième figure on observe cependant que la proportion de periodes de deux semaines avec moins de 1 cas reste proche de celle des villes du Royaume-Uni mis à part un faible nombre d'exceptions pour des faibles populations. Au dessus de la taille de population critique de $10^{5.5}$, on observe que malgré l'instabilité des cycles de la rougeole aux Etats-Unis, il n'y a que 3 villes américaines avec plus 30% de periodes avec moins de 1 cas. Ceci est intéressant car il était pensé qu'une déviation des cycles stables observés au Royaume-Uni résultait automatiquement à des épidémies épisodiques à forte périodicité moyenne et donc avec de nombreuses périodes d'extinction de la maladie. C'est ce qui avait été nottament observé à Niamey au Niger où de fortes perturbations démographiques entrainaient des extinctions de l'épidémie. Or ici, on observe que malgré des cycles instables, les épidémies persistent. 
+
+### Bifurcations en fonction de l'amplitude ou de la durée de la periode de basse transmission
+
+Enfin, pour confirmer l'hypothèse que ce sont les différences sur la période de basse transmission de la maladie qui affectent les cycles de la rougeole aux Etats-Unis. Nous effectuons plusieurs simulations déterministes pour la ville de Los Angeles en faisant varier la durée de cette période de basse transmission ou en faisant varier l'amplitude de la période de basse transmission à travers des fonctions synthétiques du taux de transmission $\beta_t$ dans le but d'obtenir des tracés de bifurcation.
+
+Afin d'effectuer cela, nous calculons plusieurs séries synthétiques des 26 valeurs du paramètre $\beta_t$ de sorte à obtenir des periodes de basse transmission plus ou moins longues ou plus ou moins amples. Nous créeons ces valeurs synthétique à partir de la fonction synthétique:
+
+$$\beta_t =  \left\{
+    \begin{array}{ll}
+        \beta_- & \mbox{si } a\leq t \leq b \\
+        \beta_+ & \mbox{sinon.}
+    \end{array}
+\right.$$
+
+où a est le début de la période de basse transmission et b la fin de la période de basse transmission et $\beta_-$ et $\beta_+$, les valeurs minimales et maximales atteintes par la fonction de transmission [@1]. Nous ajoutons ensuite une constante afin d'obtenir une moyenne des valeurs de beta égale à la moyenne des valeurs de $\beta$ obtenues lors de l'estimation des paramètres pour les jeux de données. 
+
+Voila le tracé d'une fonction synthétique générée pour une période de de basse transmission entre la 9ème bisemaine et la 15ème bisemaine, pour une amplitude de 20  et pour une moyenne désirée de 40. (c.f annexe pour accéder au code)
+
+
+```{r,fig.show="hold",echo=FALSE,out.width="50%",fig.align="center",fig.cap="Exemple d'une fonction synthétique de beta"}
+mean_bet = mean(params_US$`LOS ANGELES`$beta_)
+generate_beta = function(a,b,beta_minus,beta_plus,mean_b)
+{
+  bet=c(1:26)
+  sequence = seq(1,26,by=1)
+  for(i in sequence)
+  {
+    if(i<b && i>a) bet[i]=beta_minus
+    else bet[i] = beta_plus
+  }
+  diff= mean_b-mean(bet)
+  bet = bet +diff
+  return(bet)
+}
+
+plot(generate_beta(9,15,10,30,40),type='l',xlab='temps: mesuré en bi-semaines',ylab='beta')
+```
+
+
+Nous traçons deux bifurcations, une en fonction de la durée de la période de basse transmission pour une amplitude fixée puis une en fonction de l'amplitude de la période de basse transmission pour une durée fixée. 
+
+Afin d'y parvenir pour le premier tracé:
+
+ *Nous créeons plusieurs séries synthétiques du taux de transmission en faisant varier la durée de la période de basse transmission sans modifier l'amplitude (que l'on paramètre comme égale à l'amplitude de l'estimation de $\beta_t$ sur les données observées) 
+ *Pour chaque série synthétique $\beta_t$ nous effectuons une simulation 100 ans en avant en maintenant la taille de la population et la natalité constante égale à la moyenne observée. 
+ *Nous stockons les valeurs simulées de la population infectée tous les mois de mai c'est à dire à la 10 ème bi-semaine (correspondant en général au pic annuel des cas de rougeole). 
+ *Pour chaque durée de la période de basse transmission de chaque série $\beta_t$ synthétisée, nous traçons les valeurs de la population infectée à chaque moi de mai, soit 100 valeurs.
+
+De même pour le deuxième tracé:
+
+ *Nous créons plusieurs séries synthétiques du taux de transmission $\beta_t$ en faisant varier l'amplitude pour une durée constante égale à celle observée sur les données
+ *Nous simulons pour chaque série $\beta_t$ synthétisée, la population infectée 100 ans en avant avec la population et le nombre de naissance constant. 
+ *Nous tracons ensuite les valeurs obtenues de la population infectée tous les mois de mai en fonction de l'amplitude de la série synthétisée. 
+
+Sachant que les mesures sont effectuées toutes les deux semaines, donc que les séries du taux de transmission ne contiennent que 26 valeurs et que nous devons centrer les intervalles de temps pour la période de basse transmission au niveau du mois de juin pour être cohérent avec les observations, nous ne pouvons donc pas créer plus de 11 séries synthétiques pour le premier tracé. Il aurait été intéressant de pouvoir en créer plus pour bien observer les bifurcations. Cependant nous obtenons quand même de bons résultats et nous pouvons créer de nombreuses séries synthétiques pour le deuxième tracé qui lui est en fonction de l'amplitude.  (c.f annexe pour accéder au code)
+
+Voici les résultats obtenus:
+
+```{r,fig.show="hold",out.width="50%",echo=FALSE,fig.cap="Tracés de Bifurcation"}
+grid_duration= data.frame(a=c(1:11),b=c(23:13))
+beta_amp = range(params_US$`LOS ANGELES`$beta_)
+bifurc_duration = vector(mode="list",length=length(grid_duration$a))
+sequ= seq(10,5200,by=26)
+for(i in c(1:length(grid_duration$a)))
+{
+  beta_var = generate_beta(grid_duration[i,1],grid_duration[i,2],beta_amp[1],beta_amp[2],mean_bet)
+  res_tsir_LA= SimTsir2(beta_var,0.975,rep(mean(split_df_no0$`LOS ANGELES`$births),5201),rep(mean(split_df_no0$`LOS ANGELES`$pop),5201),inits=list(Snull=0.035*mean(split_df_no0$`LOS ANGELES`$pop),Inull=split_df_no0$`LOS ANGELES`$cases[1]/params_US$`LOS ANGELES`$rho_hat[1]),type=1)
+  
+  res_tsir_LA = res_tsir_LA$I[sequ]
+  res_tsir_LA = res_tsir_LA[100:200]
+  res_tsir_LA = log(res_tsir_LA)
+  bifurc_duration[[i]]=res_tsir_LA
+}
+
+bifurc_duration = as.data.frame(bifurc_duration)
+names(bifurc_duration)= grid_duration$b-grid_duration$a
+bifurc_duration=rev(bifurc_duration)
+plot(rev(grid_duration$b-grid_duration$a),bifurc_duration[1,],ylim=c(-30,20),pch=16,cex=0.3,xlab="Durée de basse transmission x2 semaines",ylab = "log(Infectés)",main="Bifurcation en fonction de la durée de basse transmission" )
+for(i in c(2:100))
+{
+  points(rev(grid_duration$b-grid_duration$a),bifurc_duration[i,],pch=16,cex=0.3)
+}
+
+beta_m = seq(5,mean(range(params_US$`LOS ANGELES`$beta_)),length=100)
+beta_p = seq(mean(range(params_US$`LOS ANGELES`$beta_)),70,length=100 )
+
+grid_amp=data.frame(b_= beta_m,b_p=rev(beta_p))
+grid_amp=grid_amp[1:99,]
+
+
+bifurc_amp = vector(mode="list",length=length(grid_amp$b_))
+sequ= seq(10,5200,by=26)
+for(i in c(1:length(grid_amp$b_)))
+{
+  beta_var = generate_beta(10,19,grid_amp[i,1],grid_amp[i,2],mean_bet)
+  res_tsir_LA= SimTsir2(beta_var,0.975,rep(mean(split_df_no0$`LOS ANGELES`$births),5201),rep(mean(split_df_no0$`LOS ANGELES`$pop),5201),inits=list(Snull=0.035*mean(split_df_no0$`LOS ANGELES`$pop),Inull=split_df_no0$`LOS ANGELES`$cases[1]/params_US$`LOS ANGELES`$rho_hat[1]),type=1)
+  
+  res_tsir_LA = res_tsir_LA$I[sequ]
+  res_tsir_LA = res_tsir_LA[100:200]
+  res_tsir_LA = log(res_tsir_LA)
+  bifurc_amp[[i]]=res_tsir_LA
+}
+bifurc_amp = as.data.frame(bifurc_amp)
+names(bifurc_amp)= grid_amp$b_p-grid_amp$b_
+bifurc_amp=rev(bifurc_amp)
+plot(rev(grid_amp$b_p-grid_amp$b_),bifurc_amp[1,],xlab="Amplitude beta",ylab="log(Infectés)",cex=0.5,pch=16,main="bifurcation en fonction de l'amplitude")
+for(i in c(2:100))
+{
+  points(rev(grid_amp$b_p-grid_amp$b_),bifurc_amp[i,],pch=16,cex=0.3)
+}
+
+```
+Dans le premier tracé on observe que pour une très faible durée de la periode de basse transmission, le nombre de cas infectés sur les 100 mois de mai ne prend que deux valeurs et plus la durée de la période de basse transmission augmente plus le nombre de valeurs prises ainsi que l'intervalle de valeurs prises par le nombre de cas infectés à chaque mois de mai augmente. De plus pour des durées de plus de 8 "bisemaines" (16 semaines) comme celle observée aux Etats-Unis (20 semaines) on atteint parfois des valeurs proches de zéro et d'autres supérieures à 1000 ce qui montre que les cycles ne sont plus stables du tout. 
+
+Dans le deuxième tracé de bifurcation on observe bien un nombre croissant de trajectoires possible en fonction de l'amplitude de la periode de basse transmission. 
+
+Ainsi on peut empiriquement conclure que des perturbations sur la periode de basse transmission entrainent une instabilité des cycles de la rougeole malgré une persistance des épidémies.
+
+
+# Conclusion
+
+En conclusion, le modèle TSIR semble bien capter les cycles de la rougeole. Malgré des prédictions de qualité médiocre, les postdictions restent précises. Il ne fait pas de doute que les cycles d'épidémies aux Etats-Unis sont instables, et les simulations montrent que la faible perturbation sur la période de basse transmission semble entraîner une déviation des cycles stables observés au Royaume-Uni vers des cycles instables et des épidémies persistantes. Nous regrettons de ne pas avoir pu effectuer des simulations en faisant varier les conditions initiales afin de montrer une plus forte sensibilité aux conditions initiales pour les cycles de la rougeole aux Etats-Unis afin de souligner encore plus la nature chaotique de ces épidémies, faute de temps. De plus, nous aurions souhaité effectuer des analyses sur plus de villes et de pouvoir plus approfondir les aspects théoriques associés au modèle TSIR, par exemple discuter de l'identifiabilité du modèle, de la modélisation comme un processus auto-régressif, ou de l'estimation des paramètres par méthodes Bayesiennes (sujet sur lequel les auteurs de l'article sont entrain de travailler). Cependant nous sommes convaincu des résultats obtenus par D.Dalziel qui semblent cohérents avec ceux que nous avons reproduit malgré des doutes sur le fait de fixer la valeur du paramètre $\alpha$ pour toutes les villes. 
+
+
+# Annexe
+
+Ci dessous vous trouverez l'implémentation des étapes cruciales de ce TER, si vous souhaitez executer tout le code nous vous invitons à consulter le fichier .Rmd qui contient le scripte executable intégralement. 
+```{r,message=FALSE,eval=FALSE}
+#Regression cumul/cumul
+regression = smooth.spline(x=cumsum(Births),y=cumsum(modeldata$cases),df=2.5) 
+
+## Calcul de rho comme la pente en chaque point 
+rho = predict(regression,cumsum(Births),deriv=1)$y
+# Extraction des résidus, ajustement par rho. 
+D = -resid(regression)/rho 
+```
+
+```{r,eval=FALSE}
+regression.lin = lm(cumsum(modeldata$cases)~cumsum(Births)) 
+rho_2 = regression.lin$coefficients[2]
+D2 = -regression.lin$residuals/rho_2
+```
+
+```{r,message=FALSE,eval=FALSE}
+res2 = runtsir(data = modeldata,xreg="cumbirths",method = "negbin",regtype='lm')
+```
+
+```{r,eval=FALSE}
+I= modeldata$cases/rho
+I_t=I[1:546]
+I_tp1=I[2:547]
+```
+
+```{r,eval=FALSE}
+## Estimation de Sbarre, beta et alpha
+saison= rep(1:26,21) #dummy variable pour beta
+log_Itp1= log(I_tp1) # It+1 en log
+log_It= log(I_t) # It en log
+D_t= D[1:546] # résidus même longueur
+sbar = seq(0.02,0.4,length=300) #vecteurs des candidats de sbarre
+offsetN = -log(modeldata$pop[1:546]) #log de la population
+vraisemblance = rep(NA, length(sbar)) # vecteur contenant les valeurs de la vraisemblance
+```
+
+```{r,eval=FALSE}
+for(i in 1:length(sbar)){
+St = log(sbar[i]*modeldata$pop[1:546] + D_t) #reconstruction pour chaque valeur de sbarre
+glmfit = glm(log_Itp1~ -1 +as.factor(saison) +log_It +offset(St)+offset(offsetN)
+,family=gaussian(link="identity")) #on estime les paramètres du modèle pour Sbarre
+vraisemblance[i] = glmfit$deviance/2 #stockage de la vraisemblance pour sbarre
+}
+```
+
+```{r,eval=FALSE}
+Susc_ldn_rec =  log(sbar_hat*modeldata$pop[1:546]+ D_t) #reconstruction de S
+Londonfit = glm(log_Itp1~ -1+ as.factor(saison) + log_It + offset(offsetN)
+                + offset(Susc_ldn_rec)) #estimation des paramètres 
+```
+
+```{r,eval=FALSE}
+
+#Fonction simulant une série à partir des paramètres 
+#du modèle et de conditions initiales, mode stochastique ou deterministe
+SimTsir2=function(beta, alpha, B, N, inits = list(Snull = 0, Inull = 0), type = 1)
+  {
+IT = length(B)
+s = length(beta) 
+lambda = rep(NA, IT) 
+I = rep(NA, IT)
+S = rep(NA, IT)
+I[1] = inits$Inull
+lambda[1] = inits$Inull
+S[1] = inits$Snull
+
+
+for(i in 2:IT) 
+  {
+lambda[i] = beta[((i-2) %% s)+1]*S[i - 1]*(I[i - 1]^alpha)/N[i-1]
+
+if(type == 2) 
+    {I[i] = rnbinom(1,mu=lambda[i],size=I[i-1]+1e-10)}
+if(type == 1) 
+{I[i] = lambda[i]}
+
+
+
+S[i] =max(S[i - 1] + B[i-1] - I[i],1)
+
+  }
+return(list(I = I, S = S)) 
+}
+
+```
+
+
+```{r,eval=FALSE}
+lyapunov=function(I,S,alpha,b,N){
+    len=length(I)
+    s = length(b)
+    j11=rep(0,len)
+    j12 = rep(0,len)
+    j21 = rep(0,len)
+    j22 = rep(0,len)
+    J= matrix(c(1,0),ncol=1)
+    
+    for(i in 1:len){
+      j11[i]=1 - b[(i-1)%%s +1]  * (I[i]^alpha)/N
+      j12[i]= - b[(i-1)%%s+1]*S[i]*(I[i]^(alpha-1))*alpha/N
+      j21[i]= b[(i-1)%%s+1]*(I[i]^alpha)/N
+      j22[i] = b[(i-1)%%s+1]*S[i]*((I[i]^(alpha-1))*alpha)/N
+      J= matrix(c(j11[i],j12[i],j21[i],j22[i]),ncol=2,byrow = T)%*%J
+    }
+    res= list(lypunov_exp=log(norm(J))/len,j11_=j11,j12_=j12,j21_=j21,
+              j22_=j22,S=S,I=I,alpha=alpha)
+    return(res)
+}
+regression$fit$range
+
+```
+
+```{r,message=FALSE,out.width="60%",eval=FALSE}
+param_NY = param_estim2(split_df_no0$`NEW YORK`)
+res_tsir_ny= SimTsir2(param_NY$beta_,0.975,rep(mean(split_df_no0$`NEW YORK`$births),5201)
+                      ,rep(mean(split_df_no0$`NEW YORK`$pop),5201),inits=list(Snull=param_NY$Suc[1],
+  Inull=split_df_no0$`NEW YORK`$cases[1]/param_NY$rho_hat[1]),type=1)
+
+
+lyapNY= lyapunov(res_tsir_ny$I[2601:5200],res_tsir_ny$S[2601:5200],
+                 alpha = 0.975,param_NY$beta_,
+                 N=mean(split_df_no0$`NEW YORK`$pop))
+paste("Exposant de Lyapunov pour New York = ",round(lyapNY$lypunov_exp,digits= 3))
+```
+
+```{r,fig.show="hold",eval=FALSE,out.width="50%",fig.align="center",fig.cap="Exemple d'une fonction synthétique de beta"}
+mean_bet = mean(params_US$`LOS ANGELES`$beta_)
+generate_beta = function(a,b,beta_minus,beta_plus,mean_b)
+{
+  bet=c(1:26)
+  sequence = seq(1,26,by=1)
+  for(i in sequence)
+  {
+    if(i<b && i>a) bet[i]=beta_minus
+    else bet[i] = beta_plus
+  }
+  diff= mean_b-mean(bet)
+  bet = bet +diff
+  return(bet)
+}
+
+plot(generate_beta(9,15,10,30,40),type='l',xlab='temps: mesuré en bi-semaines',ylab='beta')
+```
+
+```{r,fig.show="hold",out.width="50%",eval=FALSE,fig.cap="Tracés de Bifurcation"}
+grid_duration= data.frame(a=c(1:11),b=c(23:13))
+beta_amp = range(params_US$`LOS ANGELES`$beta_)
+bifurc_duration = vector(mode="list",length=length(grid_duration$a))
+sequ= seq(10,5200,by=26)
+for(i in c(1:length(grid_duration$a)))
+{
+  beta_var = generate_beta(grid_duration[i,1],grid_duration[i,2],beta_amp[1],beta_amp[2],mean_bet)
+  res_tsir_LA= SimTsir2(beta_var,0.975,rep(mean(split_df_no0$`LOS ANGELES`$births),5201),rep(mean(split_df_no0$`LOS ANGELES`$pop),5201),inits=list(Snull=0.035*mean(split_df_no0$`LOS ANGELES`$pop),Inull=split_df_no0$`LOS ANGELES`$cases[1]/params_US$`LOS ANGELES`$rho_hat[1]),type=1)
+  
+  res_tsir_LA = res_tsir_LA$I[sequ]
+  res_tsir_LA = res_tsir_LA[100:200]
+  res_tsir_LA = log(res_tsir_LA)
+  bifurc_duration[[i]]=res_tsir_LA
+}
+
+bifurc_duration = as.data.frame(bifurc_duration)
+names(bifurc_duration)= grid_duration$b-grid_duration$a
+bifurc_duration=rev(bifurc_duration)
+plot(rev(grid_duration$b-grid_duration$a),bifurc_duration[1,],ylim=c(-30,20),pch=16,cex=0.3,xlab="Durée de basse transmission x2 semaines",ylab = "log(Infectés)",main="Bifurcation en fonction de la durée de basse transmission" )
+for(i in c(2:100))
+{
+  points(rev(grid_duration$b-grid_duration$a),bifurc_duration[i,],pch=16,cex=0.3)
+}
+
+beta_m = seq(5,mean(range(params_US$`LOS ANGELES`$beta_)),length=100)
+beta_p = seq(mean(range(params_US$`LOS ANGELES`$beta_)),70,length=100 )
+
+grid_amp=data.frame(b_= beta_m,b_p=rev(beta_p))
+grid_amp=grid_amp[1:99,]
+
+
+bifurc_amp = vector(mode="list",length=length(grid_amp$b_))
+sequ= seq(10,5200,by=26)
+for(i in c(1:length(grid_amp$b_)))
+{
+  beta_var = generate_beta(10,19,grid_amp[i,1],grid_amp[i,2],mean_bet)
+  res_tsir_LA= SimTsir2(beta_var,0.975,rep(mean(split_df_no0$`LOS ANGELES`$births),5201),rep(mean(split_df_no0$`LOS ANGELES`$pop),5201),inits=list(Snull=0.035*mean(split_df_no0$`LOS ANGELES`$pop),Inull=split_df_no0$`LOS ANGELES`$cases[1]/params_US$`LOS ANGELES`$rho_hat[1]),type=1)
+  
+  res_tsir_LA = res_tsir_LA$I[sequ]
+  res_tsir_LA = res_tsir_LA[100:200]
+  res_tsir_LA = log(res_tsir_LA)
+  bifurc_amp[[i]]=res_tsir_LA
+}
+bifurc_amp = as.data.frame(bifurc_amp)
+names(bifurc_amp)= grid_amp$b_p-grid_amp$b_
+bifurc_amp=rev(bifurc_amp)
+plot(rev(grid_amp$b_p-grid_amp$b_),bifurc_amp[1,],xlab="Amplitude beta",ylab="log(Infectés)",cex=0.5,pch=16,main="bifurcation en fonction de l'amplitude")
+for(i in c(2:100))
+{
+  points(rev(grid_amp$b_p-grid_amp$b_),bifurc_amp[i,],pch=16,cex=0.3)
+}
+
+```
+#References
+
